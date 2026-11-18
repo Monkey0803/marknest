@@ -1648,6 +1648,7 @@ export default function App() {
       <ShortcutsDialog open={panel === 'shortcuts'} onClose={() => setPanel(null)} />
       <GroupSettingsDialog
         group={groupSettingsOpen ? groupById.get(activeGroup) ?? null : null}
+        groups={groups}
         count={groupCounts[activeGroup] ?? 0}
         onClose={() => setGroupSettingsOpen(false)}
         onSave={(patch) => {
@@ -1666,6 +1667,7 @@ export default function App() {
           showUndo(`已删除「${name}」，书签与子分组已上移一级`, () => store.importData(snapshot));
         }}
         onCreateSub={(parentId) => requestCreateGroup(undefined, parentId)}
+        onMove={handleMoveGroup}
       />
       <QuickSwitcher
         open={switcherOpen}

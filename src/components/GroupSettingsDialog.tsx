@@ -1,26 +1,33 @@
 import { useEffect, useState } from 'react';
 import type { Group } from '../types';
+import { groupSubtreeIds } from '../lib/utils';
 import { PALETTE } from './GroupCreateForm';
-import { IconCheck, IconClose, IconTrash, IconFolderPlus } from './Icons';
+import { IconCheck, IconClose, IconTrash, IconFolderPlus, IconMoveTo } from './Icons';
+import SaveToGroupMenu from './SaveToGroupMenu';
 
 interface Props {
   group: Group | null;
+  groups: Group[];
   count: number;
   onClose: () => void;
   onSave: (patch: { name?: string; color?: string }) => void;
   onDelete: (id: string) => void;
   onCreateSub: (parentId: string) => void;
+  /** 整组移动：把分组挂到 parentId 下（null = 移到顶层） */
+  onMove: (id: string, parentId: string | null) => void;
 }
 
 /**
  * 当前分组设置：从内容区标题栏的「管理」入口唤出，
- * 不必进入「管理分组」面板即可改名、换色、建子分组、删除。
+ * 不必进入「管理分组」面板即可改名、换色、移动、建子分组、删除。
  */
 export default function GroupSettingsDialog({
-  group, count, onClose, onSave, onDelete, onCreateSub,
+  group, groups, count, onClose, onSave, onDelete, onCreateSub, onMove,
 }: Props) {
   const [name, setName] = useState('');
   const [color, setColor] = useState('');
+  /** 移动到分组的菜单锚点 */
+  const [moveAnchor, setMoveAnchor] = useState<DOMRect | null>(null);
 
   useEffect(() => {
     if (group) {
@@ -83,6 +90,12 @@ export default function GroupSettingsDialog({
               <IconFolderPlus size={14} /> 新建子分组
             </button>
             <button
+              className="btn btn--ghost btn--sm"
+              onClick={(e) => setMoveAnchor(e.currentTarget.getBoundingClientRect())}
+            >
+              <IconMoveTo size={14} /> 移动
+            </button>
+            <button
               className="btn btn--danger btn--sm"
               onClick={() => { onDelete(group.id); onClose(); }}
               title="删除分组不会删除书签，子分组与书签会上移一级"
@@ -100,6 +113,27 @@ export default function GroupSettingsDialog({
           </div>
         </div>
       </div>
+
+      {moveAnchor && (
+        <SaveToGroupMenu
+          groups={groups}
+          bookmarks={[]}
+          defaultGroupId={group.parentId}
+          anchor={moveAnchor}
+          title={`移动「${group.name}」到`}
+          nullLabel="顶层（移出嵌套）"
+          showCounts={false}
+          showCreate={false}
+          hierarchical
+          excludeIds={groupSubtreeIds(groups, group.id)}
+          onPick={(parentId) => {
+            setMoveAnchor(null);
+            onMove(group.id, parentId);
+          }}
+          onRequestCreate={() => setMoveAnchor(null)}
+          onClose={() => setMoveAnchor(null)}
+        />
+      )}
     </div>
   );
 }
