@@ -47,6 +47,14 @@ export const IconReadingList = ({ size = 18, ...p }: IconProps) => (
   </svg>
 );
 
+/** 合并：两条路径汇成一条 */
+export const IconMerge = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M4 5h3.5c2 0 3.2 1 4.3 2.5L15 12l3.2 4.5c1.1 1.5 2.3 2.5 4.3 2.5H24v-2h-1.5c-1.3 0-2-.5-2.8-1.6L16.5 11l3.2-4.4C20.5 5.5 21.2 5 22.5 5H24V3h-1.5c-2 0-3.2 1-4.3 2.5L15 10 11.8 5.5C10.7 4 9.5 3 7.5 3H4z" />
+    <path d="M4 19h3.5c2 0 3.2-1 4.3-2.5l1-1.4-1.3-1.7-1.2 1.7C9.5 15.5 8.8 16 7.5 16H4z" />
+  </svg>
+);
+
 export const IconFolder = ({ size = 18, ...p }: IconProps) => (
   <svg {...base(size)} {...p}>
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />

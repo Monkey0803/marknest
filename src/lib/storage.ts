@@ -14,7 +14,14 @@
  *   - 全量数据 gzip 压缩（CompressionStream）后 base64 切成 <6KB 分片存入
  *     `mn:data:N`，meta.format = 2 标识新格式；
  *   - 兼容读取 v1（明文分片 mn:bm:N / mn:gr:N），首次写入 v2 后清理旧分片。
- *   两项合计可把容量天花板从数百条提升到约 1000~2000 条书签。
+ *
+ * v3 存储格式（增量同步）：
+ *   - 书签按 order 稳定排序后切成多个独立分组（每组 gzip 压缩，存 `mn:bg:N`）；
+ *   - 写入前与云端现有分片逐 key 比对，只写变化的分片——单条书签的新增/编辑
+ *     通常只写 1~2 个分片，大幅减少写入量，也避开 sync 的写入频率限制；
+ *   - 分组（文件夹）数量少，整体压缩存 `mn:grp:N`；
+ *   - 兼容读取 v1 / v2，首次写入 v3 后清理旧格式分片。
+ *   两项压缩合计可把容量天花板提升到约 1000~2000 条书签。
  */
 
 import type { AppState, Bookmark, Group, Settings } from '../types';
@@ -25,15 +32,23 @@ const SETTINGS_KEY = `${PREFIX}settings`;
 const BM_PREFIX = `${PREFIX}bm:`;
 const GR_PREFIX = `${PREFIX}gr:`;
 const DATA_PREFIX = `${PREFIX}data:`;
+const BG_PREFIX = `${PREFIX}bg:`;
+const GRP_PREFIX = `${PREFIX}grp:`;
 const CHUNK_LIMIT = 6000; // 保守阈值，低于 8KB 官方上限
+/** v3 书签分组的原始字节目标值：约 50 条/组，压缩后 base64 约 4~5KB（低于单 key 限制） */
+const GROUP_RAW_LIMIT = 20_000;
 
 /** chrome.storage.sync 总配额（字节） */
 export const SYNC_QUOTA = 100_000;
 
 interface Meta {
   version: number;
-  /** v2 压缩格式的分片数；v1 旧数据仍用 bmChunks/grChunks */
+  /** v2 压缩格式的分片数 */
   dataChunks?: number;
+  /** v3 书签分组数 */
+  bmGroups?: number;
+  /** v3 分组（文件夹）数据分片数 */
+  grpChunks?: number;
   /** 存储格式版本；缺省视为 1 */
   format?: number;
   updatedAt: number;
@@ -98,7 +113,61 @@ export function defaultState(): AppState {
   return { bookmarks: [], groups: [], settings: { ...DEFAULT_SETTINGS } };
 }
 
-/** 从 storage 读取完整应用状态（兼容 v1 明文分片与 v2 压缩格式） */
+const encoder = new TextEncoder();
+const byteLen = (value: string) => encoder.encode(value).length;
+
+/** v3 载荷：书签分组与分组（文件夹）数据的 base64 分片 */
+interface V3Payload {
+  bmChunks: string[];
+  grpChunks: string[];
+}
+
+/**
+ * 构建 v3 载荷：书签按 order 稳定排序、切组、逐组 gzip。
+ * 新书签 order 最大、排在末尾 → 通常只影响最后一个分组，利于增量写入。
+ */
+async function buildV3Payload(state: AppState): Promise<V3Payload> {
+  const slim = slimBookmarks(state.bookmarks)
+    .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
+
+  // 按原始字节累积分组
+  const groups: Bookmark[][] = [];
+  let current: Bookmark[] = [];
+  for (const bm of slim) {
+    current.push(bm);
+    if (byteLen(JSON.stringify(current)) >= GROUP_RAW_LIMIT) {
+      groups.push(current);
+      current = [];
+    }
+  }
+  if (current.length) groups.push(current);
+
+  // 逐组压缩；单组 base64 超限时对半拆分重试（极长单条书签则退化为字符串切块）
+  const bmChunks: string[] = [];
+  const packList = async (list: Bookmark[]): Promise<void> => {
+    const b64 = bytesToBase64(await gzipCompress(JSON.stringify(list)));
+    if (b64.length <= CHUNK_LIMIT) {
+      bmChunks.push(b64);
+      return;
+    }
+    if (list.length <= 1) {
+      bmChunks.push(...chunkString(b64, CHUNK_LIMIT));
+      return;
+    }
+    const mid = Math.ceil(list.length / 2);
+    await packList(list.slice(0, mid));
+    await packList(list.slice(mid));
+  };
+  for (const g of groups) await packList(g);
+
+  // 分组（文件夹）数量少：整体压缩，超限才切块
+  const grpB64 = bytesToBase64(await gzipCompress(JSON.stringify(state.groups)));
+  const grpChunks = grpB64.length <= CHUNK_LIMIT ? [grpB64] : chunkString(grpB64, CHUNK_LIMIT);
+
+  return { bmChunks, grpChunks };
+}
+
+/** 从 storage 读取完整应用状态（兼容 v1 明文分片 / v2 整体压缩 / v3 分组压缩） */
 export async function loadState(): Promise<AppState> {
   const metaObj = await chrome.storage.sync.get(META_KEY);
   const meta = metaObj[META_KEY] as Meta | undefined;
@@ -106,9 +175,10 @@ export async function loadState(): Promise<AppState> {
     // 首次安装：写入默认设置，建立 meta
     const settings = { ...DEFAULT_SETTINGS };
     const newMeta: Meta = {
-      version: 2,
-      format: 2,
-      dataChunks: 0,
+      version: 3,
+      format: 3,
+      bmGroups: 0,
+      grpChunks: 0,
       updatedAt: Date.now(),
       deviceId: crypto.randomUUID(),
     };
@@ -119,15 +189,45 @@ export async function loadState(): Promise<AppState> {
     return { bookmarks: [], groups: [], settings };
   }
 
-  if (meta.format === 2) {
-    // v2：压缩分片
-    const dataKeys = Array.from({ length: meta.dataChunks ?? 0 }, (_, i) => `${DATA_PREFIX}${i}`);
-    const [dataObj, settingsData] = await Promise.all([
-      dataKeys.length
-        ? chrome.storage.sync.get(dataKeys)
-        : Promise.resolve<Record<string, unknown>>({}),
-      chrome.storage.sync.get(SETTINGS_KEY),
+  const settingsData = await chrome.storage.sync.get(SETTINGS_KEY);
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    ...((settingsData[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}),
+  };
+
+  if (meta.format === 3) {
+    // v3：书签分组各自独立 gzip，分组（文件夹）为单流切块
+    const bgKeys = Array.from({ length: meta.bmGroups ?? 0 }, (_, i) => `${BG_PREFIX}${i}`);
+    const grpKeys = Array.from({ length: meta.grpChunks ?? 0 }, (_, i) => `${GRP_PREFIX}${i}`);
+    const [bgData, grpData] = await Promise.all([
+      bgKeys.length ? chrome.storage.sync.get(bgKeys) : Promise.resolve<Record<string, unknown>>({}),
+      grpKeys.length ? chrome.storage.sync.get(grpKeys) : Promise.resolve<Record<string, unknown>>({}),
     ]);
+    let bookmarks: Bookmark[] = [];
+    let groups: Group[] = [];
+    try {
+      for (const key of bgKeys) {
+        const b64 = bgData[key] as string | undefined;
+        if (!b64) continue;
+        const items = JSON.parse(await gunzipToText(base64ToBytes(b64))) as Bookmark[];
+        bookmarks.push(...items);
+      }
+      const grpB64 = grpKeys.map((k) => (grpData[k] as string | undefined) ?? '').join('');
+      if (grpB64) {
+        groups = JSON.parse(await gunzipToText(base64ToBytes(grpB64))) as Group[];
+      }
+    } catch (err) {
+      console.error('decompress sync data failed', err);
+    }
+    return { bookmarks, groups: normalizeGroups(groups), settings };
+  }
+
+  if (meta.format === 2) {
+    // v2：整体压缩分片
+    const dataKeys = Array.from({ length: meta.dataChunks ?? 0 }, (_, i) => `${DATA_PREFIX}${i}`);
+    const dataObj = dataKeys.length
+      ? await chrome.storage.sync.get(dataKeys)
+      : {} as Record<string, unknown>;
     const b64 = dataKeys.map((k) => (dataObj[k] as string | undefined) ?? '').join('');
     let bookmarks: Bookmark[] = [];
     let groups: Group[] = [];
@@ -141,24 +241,19 @@ export async function loadState(): Promise<AppState> {
         console.error('decompress sync data failed', err);
       }
     }
-    const settings = {
-      ...DEFAULT_SETTINGS,
-      ...((settingsData[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}),
-    };
     return { bookmarks, groups: normalizeGroups(groups), settings };
   }
 
   // v1：明文分片（老版本数据）
   const bmKeys = Array.from({ length: meta.bmChunks ?? 0 }, (_, i) => `${BM_PREFIX}${i}`);
   const grKeys = Array.from({ length: meta.grChunks ?? 0 }, (_, i) => `${GR_PREFIX}${i}`);
-  const [bmData, grData, settingsData] = await Promise.all([
+  const [bmData, grData] = await Promise.all([
     bmKeys.length
       ? chrome.storage.sync.get(bmKeys)
       : Promise.resolve<Record<string, unknown>>({}),
     grKeys.length
       ? chrome.storage.sync.get(grKeys)
       : Promise.resolve<Record<string, unknown>>({}),
-    chrome.storage.sync.get(SETTINGS_KEY),
   ]);
 
   const bookmarks: Bookmark[] = bmKeys.flatMap(
@@ -167,13 +262,8 @@ export async function loadState(): Promise<AppState> {
   const rawGroups: Group[] = grKeys.flatMap(
     (key) => (grData[key] as Group[] | undefined) ?? [],
   );
-  const groups = normalizeGroups(rawGroups);
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    ...((settingsData[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}),
-  };
 
-  return { bookmarks, groups, settings };
+  return { bookmarks, groups: normalizeGroups(rawGroups), settings };
 }
 
 /**
@@ -198,21 +288,21 @@ export function normalizeGroups(raw: Group[]): Group[] {
 }
 
 /**
- * 估算完整状态写入 storage.sync 所需的字节数（按 v2 实际压缩流程计算）。
- * 异步：与真实写入同一套瘦身+压缩流程，预检不产生误判。
+ * 估算完整状态写入 storage.sync 所需的字节数（按 v3 实际分组压缩流程计算）。
+ * 异步：与真实写入同一套流程，预检不产生误判。
  */
 export async function estimateBytes(state: AppState): Promise<number> {
-  const payloadJson = JSON.stringify({
-    bookmarks: slimBookmarks(state.bookmarks),
-    groups: state.groups,
-  });
-  const compressed = await gzipCompress(payloadJson);
-  const b64 = bytesToBase64(compressed);
-  const chunks = Math.max(1, Math.ceil(b64.length / CHUNK_LIMIT));
-  return b64.length + chunks * 10 + 150; // key 名与 meta/settings 开销
+  const { bmChunks, grpChunks } = await buildV3Payload(state);
+  const dataBytes =
+    bmChunks.reduce((s, c) => s + c.length, 0) +
+    grpChunks.reduce((s, c) => s + c.length, 0);
+  return dataBytes + (bmChunks.length + grpChunks.length) * 10 + 150; // key 名与 meta/settings 开销
 }
 
-/** 将完整应用状态写回 storage.sync（v2：gzip 压缩分片；写后清理旧格式残留） */
+/**
+ * 将完整应用状态写回 storage.sync（v3：分组压缩 + 增量写入）。
+ * 与云端现有分片逐 key 比对，只写变化的分片；写后清理旧格式与多余分片。
+ */
 export async function saveState(state: AppState): Promise<number> {
   const now = Date.now();
   const settings: Settings = { ...state.settings, lastSyncedAt: now };
@@ -220,37 +310,54 @@ export async function saveState(state: AppState): Promise<number> {
   const metaObj = await chrome.storage.sync.get(META_KEY);
   const oldMeta = metaObj[META_KEY] as Meta | undefined;
 
-  // 瘦身 + 压缩：favicon 不同步，整体 gzip 后 base64 分片
-  const payloadJson = JSON.stringify({
-    bookmarks: slimBookmarks(state.bookmarks),
-    groups: state.groups,
-  });
-  const compressed = await gzipCompress(payloadJson);
-  const b64 = bytesToBase64(compressed);
-  const chunks = chunkString(b64, CHUNK_LIMIT);
+  const { bmChunks, grpChunks } = await buildV3Payload(state);
 
   const meta: Meta = {
-    version: 2,
-    format: 2,
-    dataChunks: chunks.length,
+    version: 3,
+    format: 3,
+    bmGroups: bmChunks.length,
+    grpChunks: grpChunks.length,
     updatedAt: now,
     deviceId: oldMeta?.deviceId ?? crypto.randomUUID(),
   };
+
+  /* ---- 增量写入：先取云端现有分片，只写变化的部分 ---- */
+  const prevIsV3 = oldMeta?.format === 3;
+  const existingKeys = [
+    ...Array.from({ length: prevIsV3 ? oldMeta?.bmGroups ?? 0 : 0 }, (_, i) => `${BG_PREFIX}${i}`),
+    ...Array.from({ length: prevIsV3 ? oldMeta?.grpChunks ?? 0 : 0 }, (_, i) => `${GRP_PREFIX}${i}`),
+  ];
+  const existing = existingKeys.length
+    ? await chrome.storage.sync.get(existingKeys)
+    : ({} as Record<string, unknown>);
 
   const payload: Record<string, unknown> = {
     [SETTINGS_KEY]: settings,
     [META_KEY]: meta,
   };
-  chunks.forEach((c, i) => { payload[`${DATA_PREFIX}${i}`] = c; });
+  bmChunks.forEach((c, i) => {
+    const key = `${BG_PREFIX}${i}`;
+    if (existing[key] !== c) payload[key] = c;
+  });
+  grpChunks.forEach((c, i) => {
+    const key = `${GRP_PREFIX}${i}`;
+    if (existing[key] !== c) payload[key] = c;
+  });
 
   await chrome.storage.sync.set(payload);
 
-  // 清理不再需要的分片：v2 多余分片 + v1 旧格式全部分片
+  /* ---- 清理：多余分片 + 旧格式残留 ---- */
   const staleKeys: string[] = [];
-  for (let i = chunks.length; i < (oldMeta?.dataChunks ?? 0); i += 1) {
-    staleKeys.push(`${DATA_PREFIX}${i}`);
+  for (let i = bmChunks.length; i < (prevIsV3 ? oldMeta?.bmGroups ?? 0 : 0); i += 1) {
+    staleKeys.push(`${BG_PREFIX}${i}`);
   }
-  if (oldMeta && (oldMeta.format ?? 1) < 2) {
+  for (let i = grpChunks.length; i < (prevIsV3 ? oldMeta?.grpChunks ?? 0 : 0); i += 1) {
+    staleKeys.push(`${GRP_PREFIX}${i}`);
+  }
+  if (oldMeta && (oldMeta.format ?? 1) < 3) {
+    // v2 整体压缩分片
+    for (let i = 0; i < (oldMeta.dataChunks ?? 0); i += 1) staleKeys.push(`${DATA_PREFIX}${i}`);
+    // v1 明文分片
     for (let i = 0; i < (oldMeta.bmChunks ?? 0); i += 1) staleKeys.push(`${BM_PREFIX}${i}`);
     for (let i = 0; i < (oldMeta.grChunks ?? 0); i += 1) staleKeys.push(`${GR_PREFIX}${i}`);
   }
@@ -262,7 +369,7 @@ export async function saveState(state: AppState): Promise<number> {
 /** 查询当前同步存储占用字节数（用于配额提示） */
 export async function getUsage(): Promise<{ bytes: number; quota: number }> {
   const bytes = await chrome.storage.sync.getBytesInUse(null);
-  return { bytes, quota: 100_000 };
+  return { bytes, quota: SYNC_QUOTA };
 }
 
 /** 同步诊断信息：扩展 ID（跨设备必须一致）+ 云端分区概览 */
@@ -270,10 +377,10 @@ export interface SyncDiagnostic {
   extensionId: string;
   bytes: number;
   quota: number;
-  /** v2 为压缩数据分片数；v1 为书签分片数 */
+  /** v3 为书签分组数；v2 为压缩分片数；v1 为明文分片数 */
   bmChunks: number;
   grChunks: number;
-  /** 存储格式版本：2 = gzip 压缩 */
+  /** 存储格式版本：3 = 分组压缩 + 增量写入 */
   format: number;
   updatedAt: number;
   deviceId: string;
@@ -289,8 +396,8 @@ export async function getDiagnostic(): Promise<SyncDiagnostic> {
     extensionId: chrome.runtime.id,
     bytes,
     quota: SYNC_QUOTA,
-    bmChunks: meta?.dataChunks ?? meta?.bmChunks ?? 0,
-    grChunks: meta?.grChunks ?? 0,
+    bmChunks: meta?.bmGroups ?? meta?.dataChunks ?? meta?.bmChunks ?? 0,
+    grChunks: meta?.grpChunks ?? meta?.grChunks ?? 0,
     format: meta?.format ?? 1,
     updatedAt: meta?.updatedAt ?? 0,
     deviceId: meta?.deviceId ?? '',

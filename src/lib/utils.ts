@@ -278,6 +278,53 @@ export function findDuplicates(items: Bookmark[]): string[] {
   return dupIds;
 }
 
+/* ----------------------- 重复标签检测 ----------------------- */
+
+export interface DuplicateTagGroup {
+  /** 建议保留的规范标签（使用次数最多，其次名字最短） */
+  canonical: string;
+  /** 参与合并的成员（含规范标签自身），按使用次数降序 */
+  members: { tag: string; count: number }[];
+  /** 成员合计使用次数 */
+  total: number;
+}
+
+/** 标签规范化：全半角归一、去空白、小写 —— 「Design / design / Design 」视为同一标签 */
+function normalizeTagKey(tag: string): string {
+  return tag.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+}
+
+/** 找出语义重复的标签组（仅大小写/全半角/空白差异），供一键合并 */
+export function findDuplicateTags(bookmarks: Bookmark[]): DuplicateTagGroup[] {
+  // 统计每个标签的使用次数
+  const counts = new Map<string, number>();
+  for (const bm of bookmarks) {
+    for (const t of bm.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  // 按规范化 key 归组
+  const buckets = new Map<string, { tag: string; count: number }[]>();
+  for (const [tag, count] of counts) {
+    const key = normalizeTagKey(tag);
+    const arr = buckets.get(key) ?? [];
+    arr.push({ tag, count });
+    buckets.set(key, arr);
+  }
+  // 组内成员 > 1 才算重复
+  const out: DuplicateTagGroup[] = [];
+  for (const members of buckets.values()) {
+    if (members.length < 2) continue;
+    const sorted = [...members].sort(
+      (a, b) => b.count - a.count || a.tag.length - b.tag.length || a.tag.localeCompare(b.tag),
+    );
+    out.push({
+      canonical: sorted[0].tag,
+      members: sorted,
+      total: sorted.reduce((s, m) => s + m.count, 0),
+    });
+  }
+  return out.sort((a, b) => b.total - a.total);
+}
+
 /** 导出为 Netscape Bookmark HTML（Chrome / Firefox / Safari 通用格式） */
 export function exportToHtml(bookmarks: Bookmark[], groups: Group[]): string {
   const esc = (s: string) =>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useBookmarkStore } from './store/useBookmarkStore';
 import {
-  buildGroupTree, findDuplicates, getHost, groupPath, groupSubtreeIds, sortBookmarks,
+  buildGroupTree, findDuplicateTags, findDuplicates, getHost, groupPath, groupSubtreeIds, sortBookmarks,
 } from './lib/utils';
 import type { GroupNode } from './lib/utils';
 import type { AppState, Bookmark, Group, SortMode } from './types';
@@ -327,6 +327,12 @@ export default function App() {
   /** 阅读清单未读数量（侧栏角标） */
   const unreadCount = useMemo(
     () => bookmarks.filter((b) => b.readLater).length,
+    [bookmarks],
+  );
+
+  /** 语义重复的标签组（仅大小写/全半角/空白差异） */
+  const duplicateTags = useMemo(
+    () => findDuplicateTags(bookmarks),
     [bookmarks],
   );
 
@@ -1537,6 +1543,17 @@ export default function App() {
       <TagDialog
         open={tagPanelOpen}
         tags={tagCounts}
+        duplicates={duplicateTags}
+        onMerge={(group) => {
+          const snapshot = pushUndo(`合并重复标签为「${group.canonical}」`);
+          group.members.forEach((m) => {
+            if (m.tag !== group.canonical) store.renameTag(m.tag, group.canonical);
+          });
+          if (activeTag && group.members.some((m) => m.tag === activeTag)) {
+            setActiveTag(group.canonical);
+          }
+          showUndo(`已把 ${group.members.length - 1} 个重复写法合并为「${group.canonical}」`, () => store.importData(snapshot));
+        }}
         onClose={() => setTagPanelOpen(false)}
         onRename={(from, to) => {
           const snapshot = pushUndo(`重命名标签「${from}」为「${to}」`);
