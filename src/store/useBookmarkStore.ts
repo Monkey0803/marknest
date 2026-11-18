@@ -20,6 +20,24 @@ import { uid } from '../lib/utils';
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+/**
+ * 把 chrome.storage.sync 的写入错误翻译成用户能对症处理的提示：
+ * Chrome 的报错文本（如 QUOTA_BYTES、MAX_WRITE_OPERATIONS、网络错误）差异较大，按关键词归类。
+ */
+function describeSyncError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/quota/i.test(msg)) {
+    return '同步容量已达上限（100 KB）：先导出 JSON 备份，再清理部分书签后重试';
+  }
+  if (/MAX_WRITE_OPERATIONS|write operations/i.test(msg)) {
+    return '同步写入过于频繁：稍等一两分钟再点「重试」即可';
+  }
+  if (/network|net::|connection|timed?\s?out|offline/i.test(msg)) {
+    return '网络不可用：改动暂存在本地，恢复联网后点「重试」';
+  }
+  return '同步失败：请确认 Chrome 已登录 Google 账户并开启了同步';
+}
+
 export interface NewBookmarkInput {
   title: string;
   url: string;
@@ -95,7 +113,7 @@ export function useBookmarkStore() {
         console.error('saveState failed', err);
         setSync({
           phase: 'error',
-          message: '同步失败：请检查网络或账户空间',
+          message: describeSyncError(err),
           lastSyncedAt: next.settings.lastSyncedAt,
         });
       } finally {
