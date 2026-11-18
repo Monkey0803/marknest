@@ -1207,7 +1207,7 @@ export default function App() {
                     onClick={() => { setView('bookmarks'); setActiveGroup(g.id); setActiveTag(null); }}
                     title={depth ? groupPath(groups, g.id).map((p) => p.name).join(' / ') : g.name}
                   >
-                    <span className="nav-item__dot" style={{ background: g.color }} />
+                    <IconFolder size={15} style={{ color: g.color, flexShrink: 0 }} />
                     <span className="nav-item__name">{g.name}</span>
                     <em>{groupCounts[g.id] ?? 0}</em>
                   </button>
