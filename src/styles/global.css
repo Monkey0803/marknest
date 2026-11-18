@@ -885,10 +885,13 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .bm__check {
   flex: 0 0 auto; align-self: center; margin-left: 9px;
   width: 17px; height: 17px; border-radius: 50%;
+  /* 重置按钮默认 padding/line-height，否则勾选图标在圆内不居中 */
+  padding: 0; line-height: 0;
   border: 1.5px solid var(--line-strong); background: var(--surface);
   display: grid; place-items: center; color: var(--paper); cursor: pointer;
   transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
 }
+.bm__check svg { display: block; }
 .bm__check:hover { border-color: var(--accent); }
 .bm__check.is-checked { background: var(--accent); border-color: var(--accent); }
 .bm--grid .bm__check {
