@@ -1,5 +1,8 @@
 # Marknest · 书签管家
 
+[![GitHub release](https://img.shields.io/github/v/release/Monkey0803/marknest)](https://github.com/Monkey0803/marknest/releases/latest)
+[![Chrome MV3](https://img.shields.io/badge/Chrome-Manifest%20V3-4285f4)](https://developer.chrome.com/docs/extensions/develop/migrate)
+
 一个基于 **Chrome Manifest V3** 的书签管理**侧边栏**扩展。点击工具栏图标即在浏览器右侧展开侧边栏（高度与浏览器窗口一致、宽度可拖动），分组、标签、搜索、重复检测一应俱全，数据通过 `chrome.storage.sync` **跟随你的 Google 账户自动同步**到所有登录了同一账户的 Chrome 设备——无需后端、无需 OAuth 配置。
 
 ---
@@ -18,15 +21,30 @@
 
 ---
 
-## 安装（开发者模式加载）
+## 安装
 
-1. 打开 Chrome，地址栏输入 `chrome://extensions`。
-2. 打开右上角的「**开发者模式**」开关。
-3. 点击「**加载已解压的扩展程序**」。
-4. 选择本项目的 **`dist`** 文件夹。
-5. 浏览器工具栏会出现 Marknest 图标（赤陶色书签），**点击图标即在右侧展开书签侧边栏**。侧边栏高度自动等于浏览器内容区高度，宽度可通过拖动左边缘调整（初始 400px）。
+### 方式一：下载即用（推荐，无需 Node.js）
 
-> 已提供构建好的 `dist/`，可直接使用。修改源码后需重新构建（见下方）。
+1. 打开 [Releases](https://github.com/Monkey0803/marknest/releases/latest)，下载 **`marknest-v1.0.0.zip`**。
+2. 解压，得到一个 `marknest-v1.0.0` 文件夹——**打开后应能直接看到 `manifest.json`**（不是它里面的 `assets` 子目录）。
+3. Chrome 地址栏输入 `chrome://extensions`，打开右上角的「**开发者模式**」。
+4. 点击「**加载已解压的扩展程序**」，选择第 2 步解压出的那个文件夹。
+5. 浏览器工具栏出现 Marknest 图标（赤陶色书签），**点击图标即在右侧展开书签侧边栏**。侧边栏高度自动等于浏览器内容区高度，宽度可通过拖动左边缘调整（初始 400px）。
+
+> Chrome 只能加载**文件夹**、不能直接加载 zip，所以必须先解压。个别解压工具会多套一层目录，请一路选到能看到 `manifest.json` 的那一层。
+
+> **更新到新版本**：下载新包解压后覆盖原文件夹，回到 `chrome://extensions` 点一次该扩展的刷新图标即可。书签数据存放在 `chrome.storage.sync`，覆盖文件不会丢失，无需重新导入。
+
+### 方式二：从源码构建
+
+```bash
+git clone https://github.com/Monkey0803/marknest.git
+cd marknest
+npm install
+npm run build      # 产物输出到 dist/
+```
+
+随后在扩展页选择仓库里的 **`dist`** 文件夹。版本库中已附带最新构建的 `dist/`，克隆后不构建也能直接加载；改动源码后需重新执行 `npm run build`。
 
 > **侧边栏说明**：本扩展使用 Chrome 的 Side Panel API，是真正的侧边栏而非弹出浮层。点击顶栏的放大图标可在独立标签页打开更宽的管理界面；在该界面点击放大图标可切回侧边栏。也可以在网页上右键「在大窗口打开 Marknest」。
 
@@ -84,6 +102,14 @@ npm run build      # 构建到 dist/
 ```
 
 构建产物在 `dist/`，包含 `manifest.json`、`index.html`（popup）、`options.html`（大窗口）、`background.js`（Service Worker）、`assets/` 与 `icons/`。
+
+发布到 GitHub Releases 的压缩包内容与 `dist/` 完全一致，`manifest.json` 位于压缩包根层（解压后即可加载）：
+
+```bash
+npm run build
+cd dist && zip -r ../marknest-v1.0.0.zip . -x '*.DS_Store' -x '__MACOSX/*'
+gh release create v1.0.0 ../marknest-v1.0.0.zip --title "Marknest v1.0.0" --notes-file <说明文件>
+```
 
 `dev-preview/` 提供了用模拟数据渲染的预览页，可在本地起静态服务器后用普通浏览器查看界面效果（无需加载扩展）：
 
