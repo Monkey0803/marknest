@@ -1157,7 +1157,7 @@ export default function App() {
                 <div
                   key={g.id}
                   className={`nav-group ${depth ? 'nav-group--child' : ''} ${dropTarget === g.id ? 'nav-group--drop' : ''}`}
-                  style={depth ? { marginLeft: 12 } : undefined}
+                  style={depth ? { marginLeft: depth * 12 } : undefined}
                   draggable
                   onDragStart={(e) => {
                     e.stopPropagation();
@@ -1202,7 +1202,8 @@ export default function App() {
                   ) : null}
                   <button
                     className={`nav-item ${view === 'bookmarks' && activeGroup === g.id ? 'nav-item--active' : ''}`}
-                    style={hasChildren ? { paddingLeft: 18 } : undefined}
+                    /* 统一 18px 左内边距：有无折叠箭头，圆点都在同一竖线上 */
+                    style={{ paddingLeft: 18 }}
                     onClick={() => { setView('bookmarks'); setActiveGroup(g.id); setActiveTag(null); }}
                     title={depth ? groupPath(groups, g.id).map((p) => p.name).join(' / ') : g.name}
                   >
