@@ -344,9 +344,10 @@ export async function saveState(state: AppState): Promise<number> {
     if (existing[key] !== c) payload[key] = c;
   });
 
-  await chrome.storage.sync.set(payload);
-
-  /* ---- 清理：多余分片 + 旧格式残留 ---- */
+  /* ---- 清理必须先于写入 ----
+   * 旧格式（v1/v2）分片可能已占满配额：若先写新格式再清理，
+   * 写入会因配额不足被整体拒绝，清理永远执行不到，形成「重试永远失败」的死锁。
+   * 先删除旧格式分片释放配额，迁移才能成功。 */
   const staleKeys: string[] = [];
   for (let i = bmChunks.length; i < (prevIsV3 ? oldMeta?.bmGroups ?? 0 : 0); i += 1) {
     staleKeys.push(`${BG_PREFIX}${i}`);
@@ -362,6 +363,8 @@ export async function saveState(state: AppState): Promise<number> {
     for (let i = 0; i < (oldMeta.grChunks ?? 0); i += 1) staleKeys.push(`${GR_PREFIX}${i}`);
   }
   if (staleKeys.length) await chrome.storage.sync.remove(staleKeys);
+
+  await chrome.storage.sync.set(payload);
 
   return now;
 }
