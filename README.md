@@ -5,6 +5,8 @@
 
 一个基于 **Chrome Manifest V3** 的书签管理**侧边栏**扩展。点击工具栏图标即在浏览器右侧展开侧边栏（高度与浏览器窗口一致、宽度可拖动），分组、标签、搜索、重复检测一应俱全，数据通过 `chrome.storage.sync` **跟随你的 Google 账户自动同步**到所有登录了同一账户的 Chrome 设备——无需后端、无需 OAuth 配置。
 
+![Marknest 侧边栏：左边是正在浏览的网页，右边是书签面板](store-assets/out/01-bookmarks.png)
+
 ---
 
 ## 同步原理
@@ -92,6 +94,18 @@ npm run build      # 产物输出到 dist/
 
 ---
 
+## 界面一览
+
+| 当前标签页 | 新建分组 |
+| --- | --- |
+| ![当前标签页](store-assets/out/02-current-tabs.png) | ![新建分组](store-assets/out/03-new-group.png) |
+
+| 同步诊断 | 分组配色 |
+| --- | --- |
+| ![同步诊断](store-assets/out/04-sync-diagnostic.png) | ![分组配色](store-assets/out/05-color-picker.png) |
+
+---
+
 ## 开发
 
 ```bash
@@ -144,5 +158,7 @@ bookmark-hub/
 │   └── App.tsx              # 主界面
 ├── index.html               # popup 入口
 ├── options.html             # 大窗口入口
+├── store-assets/            # 商店文案、隐私页与界面截图（README 引用 out/*.png）
+├── dev-preview/             # 模拟数据预览页
 └── README.md
 ```
