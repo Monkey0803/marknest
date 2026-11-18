@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Mgsx5lnlzmCDUnYpIxivyTCgCeoUf925B5ecljpyeurwAoNBZ7JYBw2SLRHYSMa1RdNze0a88oZiNpT8imj7cydDCOKCHE7TTxVWtFAWqyzEPoA39EjnvonWQinGofFmjTjxtWaUZnt1NM6XUvifywYH4pAsFSvvjbJ3wIY2HSh0QSu8qIOPHlUzBiomxW8qAocioBJLEocYYNiBpIIrWRmSCx7cxypBkN4jDxkoMndIheVNvKW273G/wteIYyRMPLswxyhJNbecA9bCIOl+H8tpGRcR6vq2fMzijg66zq9oDaja9sW5wExDFnCUgAm/0bSRyD0bLIrz8xS40j01QIDAQAB",
+  "name": "Marknest · 书签管家",
+  "version": "1.0.0",
+  "description": "分组管理、标签、搜索与重复检测的云同步书签管理器，数据随 Google 账户自动同步。",
+  "permissions": [
+    "storage",
+    "tabs",
+    "windows",
+    "activeTab",
+    "contextMenus",
+    "sidePanel",
+    "bookmarks"
+  ],
+  "action": {
+    "default_title": "打开 Marknest 书签侧边栏",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "index.html"
+  },
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  }
+}

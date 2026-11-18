@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Marknest Preview</title>
+<link rel="stylesheet" href="../dist/assets/main.css" />
+<style>html,body{margin:0;width:100%;height:100%}#root{height:100dvh;box-shadow:0 0 40px rgba(0,0,0,.12)}</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// ---------- Mock chrome APIs with seeded data ----------
+const store = {};
+const listeners = [];
+const now = Date.now();
+const groups = [
+  {id:'g1',name:'设计灵感',color:'#d2683f',createdAt:now-900000,order:1,parentId:null},
+  {id:'g4',name:'配色方案',color:'#c99a3b',createdAt:now-880000,order:1,parentId:'g1'},
+  {id:'g2',name:'开发工具',color:'#6a9bcc',createdAt:now-800000,order:2,parentId:null},
+  {id:'g5',name:'React 生态',color:'#8a7fb5',createdAt:now-780000,order:1,parentId:'g2'},
+  {id:'g3',name:'阅读清单',color:'#788c5d',createdAt:now-700000,order:3,parentId:null},
+];
+const bms = [
+  {id:'b1',title:'Awwwards — 每日最佳网页设计',url:'https://www.awwwards.com',description:'发现全球优秀的网页设计作品，获取灵感。',groupId:'g1',tags:['设计','灵感'],favicon:'',createdAt:now-100000,updatedAt:now-5000,visitedAt:now-5000,visits:12,pinned:true,order:0},
+  {id:'b2',title:'Mobbin — 移动端 UI 参考库',url:'https://mobbin.com',description:'海量真实 App 界面截图，产品设计参考必备。',groupId:'g4',tags:['设计','UI'],favicon:'',createdAt:now-90000,updatedAt:now-8000,visitedAt:now-8000,visits:8,pinned:false,order:1},
+  {id:'b3',title:'MDN Web Docs',url:'https://developer.mozilla.org',description:'',groupId:'g2',tags:['开发','文档'],favicon:'',createdAt:now-80000,updatedAt:now-20000,visitedAt:now-20000,visits:35,pinned:false,order:2},
+  {id:'b4',title:'TypeScript 官方文档',url:'https://www.typescriptlang.org/docs/',description:'',groupId:'g5',tags:['开发','TS'],favicon:'',createdAt:now-70000,updatedAt:now-30000,visitedAt:now-30000,visits:21,pinned:false,order:3},
+  {id:'b5',title:'GitHub',url:'https://github.com',description:'代码托管与协作平台',groupId:null,tags:['工具'],favicon:'',createdAt:now-60000,updatedAt:now-40000,visitedAt:now-40000,visits:99,pinned:false,order:4},
+  {id:'b6',title:'少数派',url:'https://sspai.com',description:'高效工作、品质生活的数字生活指南。',groupId:'g3',tags:['阅读','效率'],favicon:'',createdAt:now-50000,updatedAt:now-10000,visitedAt:now-10000,visits:5,pinned:false,order:5},
+];
+store['mn:meta']={version:1,bmChunks:1,grChunks:1,updatedAt:now-5000,deviceId:'preview-device'};
+store['mn:bm:0']=bms;
+store['mn:gr:0']=groups;
+store['mn:settings']={theme:'light',view:'list',sort:'manual',lastSyncedAt:now-5000,installedAt:now-1000000};
+
+const enc=new TextEncoder();
+const sync={
+  get(keys){
+    return new Promise(res=>{
+      let out={};
+      if(keys==null) out={...store};
+      else if(typeof keys==='string'){ if(keys in store) out[keys]=store[keys]; }
+      else if(Array.isArray(keys)){ keys.forEach(k=>{if(k in store) out[k]=store[k];}); }
+      else { for(const k in store){ if(Array.isArray(keys)?keys.includes(k):(typeof keys==='object'&&Object.keys(keys).includes(k))) out[k]=store[k]; } }
+      res(out);
+    });
+  },
+  set(obj){ return new Promise(res=>{ Object.assign(store,obj); listeners.forEach(fn=>fn(obj,'sync')); res(); }); },
+  remove(keys){ return new Promise(res=>{ (Array.isArray(keys)?keys:[keys]).forEach(k=>delete store[k]); listeners.forEach(fn=>fn({},'sync')); res(); }); },
+  getBytesInUse(){ const s=Object.values(store).reduce((a,v)=>a+enc.encode(JSON.stringify(v)).length,0); return Promise.resolve(s); },
+};
+window.chrome={
+  storage:{
+    sync,
+    local:{get:()=>Promise.resolve({}),set:()=>Promise.resolve()},
+    onChanged:{addListener(fn){listeners.push(fn);},removeListener(fn){const i=listeners.indexOf(fn);if(i>=0)listeners.splice(i,1);}},
+  },
+  runtime:{id:'ogmcaogpefjcmpblhbpcfmifipflecnb',getManifest:()=>({version:'1.0.0'}),getURL:(p)=>('/'+p)},
+  tabs:{
+    create:({url})=>{console.log('open tab',url);},
+    get:(id)=>Promise.resolve({id,windowId:1}),
+    update:(id,info)=>{console.log('activate tab',id,info);return Promise.resolve({});},
+    query:(info)=>{
+      const sample=[
+        {id:1,title:'Awwwards — 每日最佳网页设计',url:'https://www.awwwards.com',favIconUrl:'',active:true,windowId:1},
+        {id:2,title:'MDN Web Docs',url:'https://developer.mozilla.org',favIconUrl:'',active:false,windowId:1},
+        {id:3,title:'GitHub',url:'https://github.com',favIconUrl:'',active:false,windowId:1},
+        {id:4,title:'少数派',url:'https://sspai.com',favIconUrl:'',active:false,windowId:2},
+        {id:5,title:'Figma — 界面设计工具',url:'https://www.figma.com',favIconUrl:'',active:false,windowId:2},
+      ];
+      const list=info&&info.currentWindow?sample.filter(t=>t.windowId===1):sample;
+      return Promise.resolve(list);
+    },
+    onCreated:{addListener(){},removeListener(){}},
+    onRemoved:{addListener(){},removeListener(){}},
+    onUpdated:{addListener(){},removeListener(){}},
+  },
+  windows:{
+    update:(id,info)=>{console.log('focus window',id,info);return Promise.resolve({});},
+    create:(info)=>{window.__winCreated=info;console.log('create window',info);return Promise.resolve({id:99});},
+  },
+  bookmarks:{getTree:()=>Promise.resolve([
+    {id:'0',title:'',children:[
+      {id:'1',title:'书签栏',children:[
+        {id:'10',title:'设计',children:[
+          {id:'11',title:'配色',children:[
+            {id:'12',title:'Coolors',url:'https://coolors.co'},
+          ]},
+          {id:'13',title:'Dribbble',url:'https://dribbble.com'},
+        ]},
+        {id:'20',title:'开发',children:[
+          {id:'21',title:'Vite',url:'https://vitejs.dev'},
+          {id:'22',title:'MDN 重复示例',url:'https://developer.mozilla.org'},
+        ]},
+        {id:'30',title:'独立链接',url:'https://example.com'},
+      ]},
+    ]},
+  ])},
+};
+// 通过 URL 参数直接触发交互状态，便于预览
+const params=new URLSearchParams(location.search);
+if(params.get('view')==='tabs'){
+  const poll=setInterval(()=>{
+    const btn=[...document.querySelectorAll('.nav-item')].find(b=>b.textContent.includes('当前标签页'));
+    if(btn){ clearInterval(poll); btn.click(); }
+  },100);
+  setTimeout(()=>clearInterval(poll),5000);
+}
+// ?groups=1 打开「管理分组」面板（预览颜色选择器）
+if(params.get('groups')==='1'){
+  const poll=setInterval(()=>{
+    const btn=[...document.querySelectorAll('.bottom-btn')].find(b=>b.textContent.includes('分组'));
+    if(btn){ clearInterval(poll); setTimeout(()=>btn.click(),150); }
+  },100);
+  setTimeout(()=>clearInterval(poll),5000);
+}
+// ?data=1 打开「数据与整理」面板（展示同步诊断）
+if(params.get('data')==='1'){
+  const poll=setInterval(()=>{
+    const btn=[...document.querySelectorAll('.bottom-btn')].find(b=>b.textContent.includes('数据'));
+    if(btn){ clearInterval(poll); setTimeout(()=>btn.click(),150); }
+  },100);
+  setTimeout(()=>clearInterval(poll),5000);
+}
+// ?newgroup=1 展开侧栏分组快捷新建表单
+if(params.get('newgroup')==='1'){
+  const poll=setInterval(()=>{
+    const btn=document.querySelector('.sidebar__add');
+    if(btn){ clearInterval(poll); setTimeout(()=>btn.click(),150); }
+  },100);
+  setTimeout(()=>clearInterval(poll),5000);
+}
+// ?dialog=1 打开添加书签弹窗（展示弹窗内的分组选择器）
+if(params.get('dialog')==='1'){
+  const poll=setInterval(()=>{
+    const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='添加');
+    if(btn){ clearInterval(poll); setTimeout(()=>btn.click(),150); }
+  },100);
+  setTimeout(()=>clearInterval(poll),5000);
+}
+// ?savemenu=1 进入标签页视图并点击第一行「+」展示分组选择菜单
+if(params.get('savemenu')==='1'||params.get('savemenunew')==='1'){
+  const step1=setInterval(()=>{
+    const tabsBtn=[...document.querySelectorAll('.nav-item')].find(b=>b.textContent.includes('当前标签页'));
+    if(tabsBtn){ clearInterval(step1); tabsBtn.click();
+      const step2=setInterval(()=>{
+        const add=document.querySelector('.tab-row__add');
+        if(add){ clearInterval(step2); setTimeout(()=>{
+          add.click();
+          if(params.get('savemenunew')==='1'){
+            const step3=setInterval(()=>{
+              const nb=document.querySelector('.save-menu__new');
+              if(nb){ clearInterval(step3); nb.click(); }
+            },100);
+            setTimeout(()=>clearInterval(step3),4000);
+          }
+        },200); }
+      },100);
+      setTimeout(()=>clearInterval(step2),5000);
+    }
+  },100);
+  setTimeout(()=>clearInterval(step1),5000);
+}
+</script>
+<script type="module" src="../dist/assets/main.js"></script>
+</body>
+</html>

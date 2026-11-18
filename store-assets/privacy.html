@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Marknest · 书签管家 — 隐私政策</title>
+<style>
+  :root{
+    --paper:#f6f3ea; --card:#fffdf7; --ink:#23262b; --ink2:#4d525a;
+    --muted:#676c67; --line:#ded8c8; --accent:#2f4562;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family: -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.85;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:56px 28px 96px;}
+  .brand{display:flex; align-items:center; gap:12px; margin-bottom:8px;}
+  .logo{width:38px;height:38px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;}
+  .brand b{font-family:Georgia,"Songti SC",serif; font-size:20px; font-weight:600; letter-spacing:.3px;}
+  .date{color:var(--muted); font-size:13px; margin:0 0 40px;}
+  h1{font-family:Georgia,"Songti SC",serif; font-size:34px; font-weight:500; margin:0 0 28px; letter-spacing:.3px;}
+  h2{font-family:Georgia,"Songti SC",serif; font-size:20px; font-weight:600; margin:38px 0 12px; color:var(--accent);}
+  p{margin:0 0 14px; color:var(--ink2);}
+  ul{margin:0 0 14px; padding-left:22px; color:var(--ink2);}
+  li{margin-bottom:7px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:24px 28px; margin:18px 0;}
+  .card p:last-child, .card ul:last-child{margin-bottom:0;}
+  code{font-family:ui-monospace,Menlo,monospace; font-size:.9em; background:#efeade; padding:1px 6px; border-radius:4px; color:var(--ink);}
+  .hi{color:var(--ink); font-weight:600;}
+  footer{margin-top:56px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:13px;}
+  a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="logo">M</span><b>Marknest · 书签管家</b></div>
+  <p class="date">生效日期：2026 年 11 月 17 日 · 更新日期：2026 年 11 月 17 日</p>
+
+  <h1>隐私政策</h1>
+
+  <div class="card">
+    <p><span class="hi">一句话总结：</span>Marknest 不运营任何服务器，也不收集你的个人资料。你的书签数据只保存在本机浏览器，并通过 Chrome 官方的同步机制，同步到<span class="hi">你自己登录的 Google 账户</span>。开发者无法读取、访问或存储这些数据。</p>
+  </div>
+
+  <h2>1. 我们收集哪些数据</h2>
+  <p><span class="hi">我们不收集任何个人身份信息。</span>扩展不要求注册账号，不需要姓名、邮箱、电话号码或支付信息，也不会把你的数据发送到开发者或第三方服务器（下文第 4 节的图标请求除外）。</p>
+  <p>扩展会处理你自己主动录入或授权读取的数据，包括：</p>
+  <ul>
+    <li>书签的标题、网址、备注、标签、所属分组与置顶状态；</li>
+    <li>你设置的分组名称、颜色，以及界面偏好（主题、视图、排序方式）；</li>
+    <li>当你使用「收藏当前标签页」功能时，临时读取当前已打开标签页的标题、网址与图标；</li>
+    <li>收藏次数、最近访问时间等用于本地排序与展示的统计信息。</li>
+  </ul>
+  <p>以上数据全部保存在你的浏览器本地存储中。</p>
+
+  <h2>2. 数据的存储与同步方式</h2>
+  <p>扩展使用 Chrome 提供的 <code>chrome.storage.sync</code> API 保存数据。当你在 Chrome 中登录 Google 账户并开启同步后，Chrome 会把该存储区的内容在你的多台设备之间同步——这是 Google 官方提供的功能，数据进入的是<span class="hi">你自己的 Google 账户</span>，而非开发者的服务器。</p>
+  <p>由于 Chrome 对同步存储有容量上限（总量约 100KB、单条约 8KB），扩展采用分片方式保存数据。若数据超出上限，扩展会在界面中提示你导出备份并清理。</p>
+  <p>扩展还提供 JSON 导入 / 导出功能，你可以随时把数据导出为文件自行保管，或从文件恢复。</p>
+
+  <h2>3. 权限使用说明</h2>
+  <ul>
+    <li><code>storage</code>：保存书签、分组与偏好设置，实现本地存储与跨设备同步。</li>
+    <li><code>tabs</code>：读取当前已打开标签页的标题与网址，用于「当前标签页」列表与一键收藏功能。</li>
+    <li><code>activeTab</code>：在你主动使用扩展时获取当前标签页信息。</li>
+    <li><code>windows</code>：在「全部窗口」模式下切换标签时，聚焦目标标签所在的浏览器窗口。</li>
+    <li><code>contextMenus</code>：在右键菜单中提供「收藏此页面」快捷入口。</li>
+    <li><code>sidePanel</code>：承载侧边栏界面。</li>
+  </ul>
+  <p>扩展不申请任何网站访问权限（<code>host_permissions</code>），不注入脚本，不读取你的浏览历史、Cookie 或网页正文内容。</p>
+
+  <h2>4. 第三方服务与网络请求</h2>
+  <div class="card">
+    <p>为了让书签列表显示网站图标（favicon），扩展会在展示书签时尝试按以下顺序加载图片：</p>
+    <ul>
+      <li>收藏时保存下来的站点图标地址；</li>
+      <li>该网站域名下的 <code>/favicon.ico</code>；</li>
+      <li>Google 的图标服务 <code>www.google.com/s2/favicons</code>；</li>
+      <li>若以上均失败，则使用本地生成的首字母色块，不发起任何请求。</li>
+    </ul>
+    <p>这些请求由浏览器图片加载触发，目的是获取图标，其副作用是相应网站与 Google 图标服务会从网络请求中看到该域名被访问。<span class="hi">扩展不会把书签标题、备注、标签或其他个人信息随这些请求发送出去。</span>如果你不希望产生此类请求，可在浏览器设置中禁用图片加载，或直接使用首字母占位。</p>
+    <p>除上述图标获取外，扩展不发起任何其他网络请求，不含任何统计、广告或埋点代码。</p>
+  </div>
+
+  <h2>5. 数据分享与披露</h2>
+  <p>我们不会出售、出租或与任何第三方分享你的数据。扩展没有开发者控制的后端，因此不存在开发者访问用户数据的可能。只有在法律明确要求的情况下，才可能依照适用法律处理相关信息。</p>
+
+  <h2>6. 数据安全</h2>
+  <p>数据仅存于你的浏览器本地存储及你自己的 Google 账户同步空间，其安全性由 Chrome 与你账户的安全设置（如两步验证）共同保障。请妥善保管你的 Google 账户。建议定期使用导出功能备份重要书签。</p>
+
+  <h2>7. 数据的删除</h2>
+  <p>你可以随时在扩展中删除任意书签、分组或全部数据。卸载扩展会移除其本地存储数据。若你希望同时清除已同步的副本，可在 Chrome 中清除该扩展的同步数据，或在 Google 账户的同步设置中管理。</p>
+
+  <h2>8. 儿童隐私</h2>
+  <p>本扩展面向一般用户，不针对 13 岁以下儿童，也不会有意收集儿童的个人信息。</p>
+
+  <h2>9. 政策更新</h2>
+  <p>若本政策发生变更，我们会更新本页顶部的「更新日期」。扩展的核心数据处理方式（本地存储 + 用户自有 Google 账户同步、无开发者服务器）如发生变化，我们会在扩展内显著提示。</p>
+
+  <h2>10. 联系我们</h2>
+  <p>如对本隐私政策有任何疑问，请通过商店页面提供的开发者联系方式与我们联系。</p>
+
+  <footer>
+    © 2026 Marknest · 书签管家 · 本隐私政策以简体中文发布，最终解释以适用法律为准。
+  </footer>
+</div>
+</body>
+</html>
