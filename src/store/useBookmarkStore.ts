@@ -11,10 +11,12 @@ import type {
 } from '../types';
 import {
   defaultState,
+  estimateBytes,
   loadState,
   normalizeGroups,
   onExternalChange,
   saveState,
+  SYNC_QUOTA,
 } from '../lib/storage';
 import { uid } from '../lib/utils';
 
@@ -164,6 +166,20 @@ export function useBookmarkStore() {
   }, []);
 
   /* ------------------------- 书签操作 ------------------------- */
+  /** 容量预检：写入后的总字节数是否超过 chrome.storage.sync 的 100KB 配额 */
+  const wouldExceedQuota = useCallback((withBookmarks: Bookmark[]): boolean => {
+    const projected: AppState = { ...stateRef.current, bookmarks: withBookmarks };
+    return estimateBytes(projected) > SYNC_QUOTA;
+  }, []);
+
+  const quotaDeny = useCallback((needKb: string) => {
+    setSync({
+      phase: 'error',
+      message: `同步空间不足：本次写入约 ${needKb} KB，已超 100 KB 上限，请清理或备份书签`,
+      lastSyncedAt: stateRef.current.settings.lastSyncedAt,
+    });
+  }, []);
+
   const addBookmark = useCallback(
     (input: NewBookmarkInput) => {
       const now = Date.now();
@@ -182,13 +198,19 @@ export function useBookmarkStore() {
         pinned: false,
         order: now,
       };
+      // 容量预检：超限时拒绝写入，避免整次同步失败
+      if (wouldExceedQuota([bm, ...stateRef.current.bookmarks])) {
+        quotaDeny((estimateBytes({ ...stateRef.current, bookmarks: [bm] }) / 1024).toFixed(1));
+        return null;
+      }
       commit((prev) => ({ ...prev, bookmarks: [bm, ...prev.bookmarks] }));
       return bm;
     },
-    [commit],
+    [commit, wouldExceedQuota, quotaDeny],
   );
 
-  /** 批量添加书签（单次写入，用于从打开的标签页一键导入） */
+  /** 批量添加书签（单次写入，用于从打开的标签页一键导入）。
+   *  返回：新增条数；-1 表示超出同步容量，本次未写入。 */
   const addBookmarks = useCallback(
     (inputs: NewBookmarkInput[]) => {
       const now = Date.now();
@@ -208,11 +230,19 @@ export function useBookmarkStore() {
         order: now + i,
       }));
       if (items.length) {
+        // 容量预检：超限时整体拒绝，避免「内存里加了、云端写失败」的静默丢数据
+        const projected: AppState = { ...stateRef.current, bookmarks: [...items, ...stateRef.current.bookmarks] };
+        const bytes = estimateBytes(projected);
+        if (bytes > SYNC_QUOTA) {
+          const delta = ((bytes - estimateBytes(stateRef.current)) / 1024).toFixed(1);
+          quotaDeny(delta);
+          return -1;
+        }
         commit((prev) => ({ ...prev, bookmarks: [...items, ...prev.bookmarks] }));
       }
       return items.length;
     },
-    [commit],
+    [commit, quotaDeny],
   );
 
   const updateBookmark = useCallback(

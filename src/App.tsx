@@ -694,13 +694,17 @@ export default function App() {
   };
 
   const handleAddFromTab = (input: NewBookmarkInput) => {
-    store.addBookmark(input);
-    showToast('已从标签页收藏');
+    const bm = store.addBookmark(input);
+    showToast(bm ? '已从标签页收藏' : '同步空间不足：该书签未能保存，请先清理或备份数据');
   };
 
   const handleAddManyFromTabs = (inputs: NewBookmarkInput[]) => {
     const n = store.addBookmarks(inputs);
-    showToast(n > 0 ? `已收藏 ${n} 个标签页并同步` : '没有需要收藏的标签页');
+    if (n > 0) showToast(`已收藏 ${n} 个标签页并同步`);
+    else if (n < 0) {
+      showToast('同步空间不足：本次批量收藏会超出 100 KB 上限，请先导出备份并清理书签');
+      setPanel('data');
+    } else showToast('没有需要收藏的标签页');
   };
 
   const handleOpenTab = (tabId: number, windowId?: number) => {

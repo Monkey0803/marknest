@@ -20,6 +20,9 @@ const BM_PREFIX = `${PREFIX}bm:`;
 const GR_PREFIX = `${PREFIX}gr:`;
 const CHUNK_LIMIT = 6000; // 保守阈值，低于 8KB 官方上限
 
+/** chrome.storage.sync 总配额（字节） */
+export const SYNC_QUOTA = 100_000;
+
 const encoder = new TextEncoder();
 const byteLen = (value: string) => encoder.encode(value).length;
 
@@ -130,6 +133,18 @@ export function normalizeGroups(raw: Group[]): Group[] {
     }
     return { ...g, parentId: pid };
   });
+}
+
+/** 估算完整状态写入 storage.sync 所需的字节数（与 saveState 同构的分片序列化） */
+export function estimateBytes(state: AppState): number {
+  let total = byteLen(JSON.stringify(state.settings)) + byteLen(SETTINGS_KEY)
+    + 110; // meta（含 updatedAt/deviceId）+ 两个 key 名
+  const bmChunks = chunkByBytes(state.bookmarks, '');
+  const grChunks = chunkByBytes(state.groups, '');
+  for (const [key, value] of Object.entries({ ...bmChunks, ...grChunks })) {
+    total += byteLen(JSON.stringify(value)) + BM_PREFIX.length + key.length + 2;
+  }
+  return total;
 }
 
 /** 将完整应用状态写回 storage.sync（自动分片 + 清理旧分片） */
