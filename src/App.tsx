@@ -14,6 +14,7 @@ import BookmarkRow from './components/BookmarkRow';
 import TabsPanel from './components/TabsPanel';
 import SaveToGroupMenu from './components/SaveToGroupMenu';
 import GroupCreateDialog from './components/GroupCreateDialog';
+import GroupSettingsDialog from './components/GroupSettingsDialog';
 import { PALETTE } from './components/GroupCreateForm';
 import TagDialog from './components/TagDialog';
 import QuickSwitcher from './components/QuickSwitcher';
@@ -24,7 +25,7 @@ import {
   IconSun, IconMoon, IconMaximize, IconClock, IconKeyboard,
   IconBookmark, IconClose, IconTabs, IconOpenWindow, IconChevron,
   IconSparkle, IconCheck, IconMoveTo, IconTrash, IconMenu, IconSort, IconArchive,
-  IconReadingList,
+  IconReadingList, IconPencil,
 } from './components/Icons';
 import SortMenu from './components/SortMenu';
 import EmptyState from './components/EmptyState';
@@ -77,6 +78,8 @@ export default function App() {
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
   /** 快速切换面板（⌘K：书签 / 分组 / 命令） */
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  /** 当前分组设置弹窗（标题栏「管理」入口） */
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
   /** 极窄面板下：侧栏收成抽屉，由顶栏按钮唤出 */
   const [drawerOpen, setDrawerOpen] = useState(false);
   /** 侧栏宽度（可拖拽调节，0 表示用样式默认值） */
@@ -1313,6 +1316,16 @@ export default function App() {
                     : `${filtered.length} 个书签`}
               </span>
             </div>
+            {view === 'bookmarks' && isRealGroup(activeGroup) && (
+              <button
+                className="icon-btn icon-btn--sm"
+                onClick={() => setGroupSettingsOpen(true)}
+                title={`管理「${groupById.get(activeGroup)?.name}」：改名、颜色、子分组、删除`}
+                aria-label={`管理分组 ${groupById.get(activeGroup)?.name ?? ''}`}
+              >
+                <IconPencil size={14} />
+              </button>
+            )}
             <div className="content__tools">
               {view === 'bookmarks' && (
                 <>
@@ -1525,8 +1538,7 @@ export default function App() {
         onSave={handleSaveBookmark}
       />
       <GroupDialog
-        open={panel === 'groups'}
-        groups={groups}
+        open={panel === 'groups'}        groups={groups}
         counts={groupCounts}
         onClose={() => setPanel(null)}
         onRequestCreate={(parentId) => requestCreateGroup(undefined, parentId)}
@@ -1634,6 +1646,27 @@ export default function App() {
         />
       )}
       <ShortcutsDialog open={panel === 'shortcuts'} onClose={() => setPanel(null)} />
+      <GroupSettingsDialog
+        group={groupSettingsOpen ? groupById.get(activeGroup) ?? null : null}
+        count={groupCounts[activeGroup] ?? 0}
+        onClose={() => setGroupSettingsOpen(false)}
+        onSave={(patch) => {
+          const g = groupById.get(activeGroup);
+          if (!g) return;
+          pushUndo(patch.name ? `重命名分组「${g.name}」` : `更改分组「${g.name}」颜色`);
+          store.updateGroup(g.id, patch);
+          showToast('分组已更新');
+        }}
+        onDelete={(id) => {
+          const g = groupById.get(id);
+          const name = g?.name ?? '分组';
+          const snapshot = pushUndo(`删除分组「${name}」`);
+          store.deleteGroup(id);
+          if (activeGroup === id) setActiveGroup('all');
+          showUndo(`已删除「${name}」，书签与子分组已上移一级`, () => store.importData(snapshot));
+        }}
+        onCreateSub={(parentId) => requestCreateGroup(undefined, parentId)}
+      />
       <QuickSwitcher
         open={switcherOpen}
         bookmarks={bookmarks}

@@ -845,6 +845,18 @@ button { cursor: pointer; }
 .dup-tags__names .is-canonical { color: var(--ink); font-weight: 600; }
 .dup-tags__names em { font-style: normal; color: var(--muted); font-size: 10px; margin-left: 1px; }
 
+/* ---- 当前分组设置（标题栏入口） ---- */
+.group-settings__swatches {
+  display: flex; flex-wrap: wrap; gap: 7px; margin: 6px 0 12px;
+}
+.group-settings__swatches .color-pop__swatch {
+  position: static; width: 26px; height: 26px;
+}
+.group-settings__actions {
+  display: flex; align-items: center; gap: 8px; margin-top: 14px;
+}
+.group-settings__spacer { flex: 1; }
+
 /* Shortcuts */
 .shortcuts { display: flex; flex-direction: column; gap: 2px; }
 .shortcut-row { display: flex; align-items: center; gap: 12px; padding: 7px 2px; border-bottom: 1px solid var(--line); }
