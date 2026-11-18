@@ -538,8 +538,9 @@ export default function App() {
       store.updateBookmark(bookmarkDialog.editing.id, data);
       showToast('书签已更新');
     } else {
-      store.addBookmark(data);
-      showToast('书签已添加并同步');
+      void store.addBookmark(data).then((bm) => {
+        showToast(bm ? '书签已添加并同步' : '同步空间不足：书签未能保存，请先清理或备份');
+      });
     }
     setBookmarkDialog(null);
   };
@@ -693,13 +694,13 @@ export default function App() {
       .catch(() => showToast('打开窗口失败，请检查浏览器设置'));
   };
 
-  const handleAddFromTab = (input: NewBookmarkInput) => {
-    const bm = store.addBookmark(input);
+  const handleAddFromTab = async (input: NewBookmarkInput) => {
+    const bm = await store.addBookmark(input);
     showToast(bm ? '已从标签页收藏' : '同步空间不足：该书签未能保存，请先清理或备份数据');
   };
 
-  const handleAddManyFromTabs = (inputs: NewBookmarkInput[]) => {
-    const n = store.addBookmarks(inputs);
+  const handleAddManyFromTabs = async (inputs: NewBookmarkInput[]) => {
+    const n = await store.addBookmarks(inputs);
     if (n > 0) showToast(`已收藏 ${n} 个标签页并同步`);
     else if (n < 0) {
       showToast('同步空间不足：本次批量收藏会超出 100 KB 上限，请先导出备份并清理书签');

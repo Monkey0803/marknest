@@ -219,7 +219,7 @@ export default function DataDialog({
                 </div>
                 <div className="diag-row">
                   <span className="diag-row__k">云端书签</span>
-                  <span className="diag-row__v">{state.bookmarks.length} 条 · {diag.bmChunks} 个分片</span>
+                  <span className="diag-row__v">{state.bookmarks.length} 条 · {diag.bmChunks} 个分片 · {diag.format === 2 ? 'gzip 压缩' : 'v1 明文'}</span>
                 </div>
                 <div className="diag-row">
                   <span className="diag-row__k">云端分组</span>
