@@ -194,9 +194,11 @@ export default function TabsPanel({
         <button
           className="tabs-import-all"
           onClick={() => onAddMany(pending.map(toInput))}
+          title={`收藏目标：${targetGroupId ? groups.find((g) => g.id === targetGroupId)?.name ?? '分组' : '未分组'}，可在上方「收藏到」里修改`}
         >
           <IconPlus size={14} />
-          一键收藏 {pending.length} 个未收藏的标签页
+          一键收藏 {pending.length} 个未收藏的标签页到「
+          {targetGroupId ? groups.find((g) => g.id === targetGroupId)?.name ?? '分组' : '未分组'}」
         </button>
       )}
 
