@@ -3,7 +3,22 @@ import type { AppState, Bookmark } from '../types';
 import { exportToHtml, getHost, relativeTime } from '../lib/utils';
 import { downloadFile } from '../lib/utils';
 import { getDiagnostic, type SyncDiagnostic } from '../lib/storage';
-import { IconClose, IconDownload, IconUpload, IconSparkle, IconTrash, IconCloudCheck } from './Icons';
+import { checkLinks, healthStats, type LinkCheckResult } from '../lib/health';
+import { IconClose, IconDownload, IconUpload, IconSparkle, IconTrash, IconCloudCheck, IconCheck, IconFolderPlus } from './Icons';
+
+/** 预设分组模板：一键套用常用分组结构（已存在的同名分组会跳过） */
+const TEMPLATES: { id: string; name: string; groups: string[] }[] = [
+  { id: 'content', name: '内容创作', groups: ['灵感收集', '写作素材', '工具与平台', '发布渠道'] },
+  { id: 'learn', name: '学习计划', groups: ['待学清单', '学习中', '参考资料', '笔记与总结'] },
+  { id: 'work', name: '项目工作', groups: ['需求文档', '设计资源', '开发工具', '会议与协作'] },
+  { id: 'life', name: '日常生活', groups: ['购物清单', '旅行计划', '美食收藏', '健康运动'] },
+];
+
+/** 上次导出备份的时间（localStorage，本地记录不参与同步） */
+const LAST_EXPORT_KEY = 'mn:lastExportAt';
+function readLastExportAt(): number {
+  return Number(localStorage.getItem(LAST_EXPORT_KEY)) || 0;
+}
 
 interface Props {
   open: boolean;
@@ -14,17 +29,25 @@ interface Props {
   onImportHtml: (bookmarks: Bookmark[]) => void;
   onRemoveDuplicates: (ids: string[]) => void;
   onImportBrowser: () => Promise<{ imported: number; skipped: number; unsupported?: number; groups?: number }>;
+  /** 健康检查里按 id 删除书签（由调用方带撤销提示） */
+  onDeleteBookmarks: (ids: string[]) => void;
+  /** 套用分组模板：新建缺失的分组，由调用方返回实际创建数 */
+  onApplyTemplate: (names: string[]) => number;
 }
 
 export default function DataDialog({
   open, state, duplicates, onClose, onImportJson, onImportHtml,
-  onRemoveDuplicates, onImportBrowser,
+  onRemoveDuplicates, onImportBrowser, onDeleteBookmarks, onApplyTemplate,
 }: Props) {
   const [message, setMessage] = useState('');
   const [permIssue, setPermIssue] = useState<'permission' | 'unknown' | null>(null);
   const [diag, setDiag] = useState<SyncDiagnostic | null>(null);
   const jsonRef = useRef<HTMLInputElement>(null);
   const htmlRef = useRef<HTMLInputElement>(null);
+  /* 健康检查状态 */
+  const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
+  const [deadLinks, setDeadLinks] = useState<LinkCheckResult[]>([]);
+  const [healthNote, setHealthNote] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -123,6 +146,48 @@ export default function DataDialog({
     }
   };
 
+  const doHealthCheck = async () => {
+    if (checking) return;
+    setDeadLinks([]);
+    setHealthNote('');
+    setChecking({ done: 0, total: 0 });
+    try {
+      const results = await checkLinks(state.bookmarks, (done, total) => setChecking({ done, total }));
+      const dead = results.filter((r) => !r.ok);
+      setDeadLinks(dead);
+      setHealthNote(
+        dead.length
+          ? `${dead.length} 个链接无法连通（共检测 ${results.length} 个）`
+          : `全部 ${results.length} 个链接均可连通`,
+      );
+    } catch {
+      setHealthNote('检测中断，请稍后再试');
+    } finally {
+      setChecking(null);
+    }
+  };
+
+  const removeDead = (ids: string[]) => {
+    onDeleteBookmarks(ids);
+    setDeadLinks((prev) => prev.filter((r) => !ids.includes(r.id)));
+    setHealthNote('');
+  };
+
+  const stats = healthStats(state.bookmarks);
+  const deadTitle = (id: string) => state.bookmarks.find((b) => b.id === id)?.title ?? '';
+
+  /* 备份提醒：从未导出或超过 30 天未导出时提示 */
+  const lastExportAt = readLastExportAt();
+  const exportDays = lastExportAt ? Math.floor((Date.now() - lastExportAt) / 86400000) : -1;
+  const backupDue = exportDays === -1 || exportDays >= 30;
+
+  const markExported = () => localStorage.setItem(LAST_EXPORT_KEY, String(Date.now()));
+
+  const applyTemplate = (t: typeof TEMPLATES[number]) => {
+    const created = onApplyTemplate(t.groups);
+    setMessage(created > 0 ? `已按「${t.name}」模板创建 ${created} 个分组` : `「${t.name}」模板的分组已全部存在`);
+  };
+
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
@@ -209,7 +274,7 @@ export default function DataDialog({
           <section className="data-section">
             <h3 className="data-section__title">备份与迁移</h3>
             <div className="data-grid">
-              <button className="data-action" onClick={doExportJson}>
+              <button className="data-action" onClick={() => { markExported(); doExportJson(); }}>
                 <IconDownload size={18} />
                 <span>导出 JSON 备份</span>
                 <small>完整数据，可再次导入</small>
@@ -219,7 +284,7 @@ export default function DataDialog({
                 <span>导入 JSON</span>
                 <small>覆盖当前全部数据</small>
               </button>
-              <button className="data-action" onClick={doExportHtml}>
+              <button className="data-action" onClick={() => { markExported(); doExportHtml(); }}>
                 <IconDownload size={18} />
                 <span>导出 HTML</span>
                 <small>通用书签格式</small>
@@ -230,6 +295,17 @@ export default function DataDialog({
                 <small>从其他浏览器迁移</small>
               </button>
             </div>
+            {backupDue && (
+              <div className="notice notice--warn" role="status">
+                <strong>该备份了。</strong>
+                <span>
+                  {exportDays === -1
+                    ? '还没有导出过备份。'
+                    : `距离上次备份已 ${exportDays} 天。`}
+                  建议导出一份 JSON 存到本地或网盘，万一同步数据被覆盖也能找回。
+                </span>
+              </div>
+            )}
             <input
               ref={jsonRef} type="file" accept="application/json,.json" hidden
               onChange={(e) => { void handleJson(e.target.files?.[0]); e.target.value = ''; }}
@@ -260,6 +336,80 @@ export default function DataDialog({
                 读取失败。可先在 Chrome 的「书签管理器」里导出 HTML，再用上面的「导入 HTML」迁移。
               </div>
             )}
+          </section>
+
+          <section className="data-section">
+            <h3 className="data-section__title">分组模板</h3>
+            <div className="template-grid">
+              {TEMPLATES.map((t) => (
+                <button
+                  key={t.id}
+                  className="data-action data-action--row"
+                  onClick={() => applyTemplate(t)}
+                  title={`创建：${t.groups.join('、')}`}
+                >
+                  <IconFolderPlus size={16} />
+                  <span>{t.name}</span>
+                  <small>{t.groups.join(' · ')}</small>
+                </button>
+              ))}
+            </div>
+            <p className="hint">已存在的同名分组会自动跳过，不会重复创建。</p>
+          </section>
+
+          <section className="data-section">
+            <h3 className="data-section__title">书签健康</h3>
+            <div className="health-stats">
+              <span className="health-chip">
+                <IconCheck size={12} /> 共 {stats.total} 条
+              </span>
+              <span className={`health-chip ${stats.noTags ? 'health-chip--muted' : ''}`}>
+                无标签 {stats.noTags} 条
+              </span>
+              <span className={`health-chip ${stats.noDesc ? 'health-chip--muted' : ''}`}>
+                无备注 {stats.noDesc} 条
+              </span>
+            </div>
+            <button
+              className="btn btn--ghost btn--block"
+              onClick={() => void doHealthCheck()}
+              disabled={!!checking}
+            >
+              <IconSparkle size={15} />
+              {checking ? `正在检测 ${checking.done}/${checking.total}…` : '检测死链'}
+            </button>
+            {healthNote && <p className="hint">{healthNote}</p>}
+            {deadLinks.length > 0 && (
+              <div className="dup-box">
+                <p>以下链接无法连通（受跨域限制，结果仅供参考，不能区分 404 与 200）：</p>
+                <ul className="health-list">
+                  {deadLinks.map((r) => (
+                    <li key={r.id} className="health-list__row">
+                      <span className="health-list__title" title={r.url}>
+                        {deadTitle(r.id) || getHost(r.url)}
+                      </span>
+                      <span className="health-list__host">{getHost(r.url)}</span>
+                      <span className="health-list__err">{r.error}</span>
+                      <button
+                        className="icon-btn icon-btn--sm icon-btn--danger"
+                        onClick={() => removeDead([r.id])}
+                        aria-label={`删除 ${deadTitle(r.id) || r.url}`}
+                        title="删除该书签"
+                      >
+                        <IconTrash size={13} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <button
+                  className="btn btn--danger btn--sm"
+                  onClick={() => removeDead(deadLinks.map((r) => r.id))}
+                >
+                  <IconTrash size={14} /> 删除全部 {deadLinks.length} 条
+                </button>
+              </div>
+            )}
+            <p className="hint">「无标签 / 无备注」仅作提醒，可在对应书签的编辑里补全。</p>
           </section>
 
           <section className="data-section">

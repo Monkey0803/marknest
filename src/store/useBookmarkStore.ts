@@ -310,11 +310,32 @@ export function useBookmarkStore() {
         ...prev,
         bookmarks: prev.bookmarks.map((b) =>
           b.id === id
-            ? { ...b, visits: b.visits + 1, visitedAt: Date.now() }
+            ? {
+                ...b,
+                visits: b.visits + 1,
+                visitedAt: Date.now(),
+                // 打开阅读清单里的书签即视为已读，自动移出清单
+                ...(b.readLater ? { readLater: false, readAt: Date.now() } : {}),
+              }
             : b,
         ),
       }));
       chrome.tabs.create({ url });
+    },
+    [commit],
+  );
+
+  /** 加入 / 移出阅读清单（移出时记录已读时间） */
+  const setReadLater = useCallback(
+    (id: string, flag: boolean) => {
+      commit((prev) => ({
+        ...prev,
+        bookmarks: prev.bookmarks.map((b) =>
+          b.id === id
+            ? { ...b, readLater: flag, readAt: flag ? undefined : Date.now(), updatedAt: Date.now() }
+            : b,
+        ),
+      }));
     },
     [commit],
   );
@@ -482,6 +503,7 @@ export function useBookmarkStore() {
     deleteTag,
     togglePin,
     visitBookmark,
+    setReadLater,
     moveBookmark,
     addGroup,
     updateGroup,

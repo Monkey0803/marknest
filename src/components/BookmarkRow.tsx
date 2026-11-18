@@ -1,10 +1,11 @@
 import React from 'react';
 import type { Bookmark, Group } from '../types';
 import {
-  colorFromString, faviconCandidates, getHost, relativeTime, rememberFavicon,
+  colorFromString, faviconCandidates, getHost, highlightSegments, relativeTime, rememberFavicon,
 } from '../lib/utils';
 import {
   IconExternal, IconPin, IconPencil, IconTrash, IconTag, IconDots, IconMoveTo, IconCheck, IconCopy,
+  IconReadingList,
 } from './Icons';
 import SaveToGroupMenu from './SaveToGroupMenu';
 
@@ -17,6 +18,8 @@ interface Props {
   allBookmarks: Bookmark[];
   view: 'grid' | 'list';
   highlighted?: boolean;
+  /** 当前搜索关键词，用于在标题/域名/备注里高亮命中片段 */
+  query?: string;
   /** 多选模式：卡片左侧出现勾选圈，点击卡片不再直接打开 */
   selectMode?: boolean;
   selected?: boolean;
@@ -27,6 +30,7 @@ interface Props {
   onEdit: (bm: Bookmark) => void;
   onDelete: (bm: Bookmark) => void;
   onTogglePin: (bm: Bookmark) => void;
+  onToggleReadLater: (bm: Bookmark) => void;
   onCopyLink: (bm: Bookmark) => void;
   onMoveToGroup: (id: string, groupId: string | null) => void;
   onRequestCreateGroup: (onDone: (group: Group) => void) => void;
@@ -38,8 +42,18 @@ interface Props {
   isDragging: boolean;
 }
 
-function Favicon({ bm }: { bm: Bookmark }) {
-  // 依次尝试候选图标地址，全部失败才回退首字母；key 绑定 url 以便切换书签时重置状态
+/** 按 query 命中位置渲染文本，命中片段加 <mark> 高亮 */
+function Hl({ text, query }: { text: string; query?: string }) {
+  if (!query || !query.trim()) return <>{text}</>;
+  const segs = highlightSegments(text, query);
+  return (
+    <>
+      {segs.map((s, i) => (s.hit ? <mark key={i} className="bm__hl">{s.text}</mark> : <React.Fragment key={i}>{s.text}</React.Fragment>))}
+    </>
+  );
+}
+
+function Favicon({ bm }: { bm: Bookmark }) {  // 依次尝试候选图标地址，全部失败才回退首字母；key 绑定 url 以便切换书签时重置状态
   const candidates = React.useMemo(() => faviconCandidates(bm), [bm.url, bm.favicon]);
   const [idx, setIdx] = React.useState(0);
   React.useEffect(() => setIdx(0), [bm.url, bm.favicon]);
@@ -69,9 +83,9 @@ function Favicon({ bm }: { bm: Bookmark }) {
 }
 
 export default function BookmarkRow({
-  bookmark: bm, group, groupPathText, groups, allBookmarks, view, highlighted,
+  bookmark: bm, group, groupPathText, groups, allBookmarks, view, highlighted, query,
   selectMode, selected, focused, onToggleSelect, onOpen, onEdit, onDelete,
-  onTogglePin, onCopyLink, onMoveToGroup, onRequestCreateGroup, onTagClick,
+  onTogglePin, onToggleReadLater, onCopyLink, onMoveToGroup, onRequestCreateGroup, onTagClick,
   onDragStart, onDragOver, onDrop, onDragEnd, isDragging,
 }: Props) {
   const [tagsExpanded, setTagsExpanded] = React.useState(false);
@@ -128,11 +142,12 @@ export default function BookmarkRow({
         <Favicon bm={bm} />
         <div className="bm__info">
           <div className="bm__title-row">
-            <span className="bm__title" title={bm.title}>{bm.title}</span>
+            <span className="bm__title" title={bm.title}><Hl text={bm.title} query={query} /></span>
             {bm.pinned && <IconPin size={12} className="bm__pin-mark" />}
+            {bm.readLater && <span className="bm__pin-mark" title="稍后阅读"><IconReadingList size={12} /></span>}
           </div>
-          <span className="bm__url">{getHost(bm.url)}</span>
-          {bm.description && <p className="bm__desc">{bm.description}</p>}
+          <span className="bm__url"><Hl text={getHost(bm.url)} query={query} /></span>
+          {bm.description && <p className="bm__desc"><Hl text={bm.description} query={query} /></p>}
           <div className="bm__meta">
             {group && (
               <span
@@ -181,6 +196,14 @@ export default function BookmarkRow({
           aria-label={bm.pinned ? '取消置顶' : '置顶'}
         >
           <IconPin size={14} />
+        </button>
+        <button
+          className={`icon-btn icon-btn--sm ${bm.readLater ? 'is-active' : ''}`}
+          onClick={() => onToggleReadLater(bm)}
+          title={bm.readLater ? '移出阅读清单（标记已读）' : '加入阅读清单（稍后阅读）'}
+          aria-label={bm.readLater ? `把 ${bm.title} 移出阅读清单` : `把 ${bm.title} 加入阅读清单`}
+        >
+          <IconReadingList size={14} />
         </button>
         <button
           className="icon-btn icon-btn--sm"

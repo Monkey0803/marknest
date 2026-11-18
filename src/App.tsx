@@ -16,14 +16,19 @@ import SaveToGroupMenu from './components/SaveToGroupMenu';
 import GroupCreateDialog from './components/GroupCreateDialog';
 import { PALETTE } from './components/GroupCreateForm';
 import TagDialog from './components/TagDialog';
+import QuickSwitcher from './components/QuickSwitcher';
+import type { SwitcherCommand } from './components/QuickSwitcher';
 import type { NewBookmarkInput } from './store/useBookmarkStore';
 import {
   IconSearch, IconPlus, IconGrid, IconList, IconFolder, IconTag,
-  IconSun, IconMoon, IconMaximize, IconDownload, IconClock, IconKeyboard,
+  IconSun, IconMoon, IconMaximize, IconClock, IconKeyboard,
   IconBookmark, IconClose, IconTabs, IconOpenWindow, IconChevron,
   IconSparkle, IconCheck, IconMoveTo, IconTrash, IconMenu, IconSort, IconArchive,
+  IconReadingList,
 } from './components/Icons';
 import SortMenu from './components/SortMenu';
+import EmptyState from './components/EmptyState';
+import ShortcutsDialog from './components/ShortcutsDialog';
 
 type Panel = 'bookmarks' | 'groups' | 'data' | 'shortcuts';
 
@@ -70,6 +75,8 @@ export default function App() {
   const [bulkTag, setBulkTag] = useState('');
   /** 标签管理对话框 */
   const [tagPanelOpen, setTagPanelOpen] = useState(false);
+  /** 快速切换面板（⌘K：书签 / 分组 / 命令） */
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   /** 极窄面板下：侧栏收成抽屉，由顶栏按钮唤出 */
   const [drawerOpen, setDrawerOpen] = useState(false);
   /** 侧栏宽度（可拖拽调节，0 表示用样式默认值） */
@@ -132,6 +139,27 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 8000);
   }, []);
 
+  /* ------------------------ 多级撤销（⌘Z） ------------------------ */
+  /** 撤销栈：记录每个可逆操作前的完整状态快照，⌘Z 逐步回退 */
+  const undoStack = useRef<{ state: AppState; label: string }[]>([]);
+  /** 在改动前调用：把当前完整状态压入撤销栈（保留最近 20 步），返回该快照供即时撤销复用 */
+  const pushUndo = useCallback((label: string): AppState => {
+    const snapshot = storeRef.current.state;
+    undoStack.current = [...undoStack.current, { state: snapshot, label }].slice(-20);
+    return snapshot;
+  }, []);
+
+  const performUndo = useCallback(() => {
+    const last = undoStack.current.pop();
+    if (!last) {
+      showToast('没有可撤销的操作');
+      return;
+    }
+    storeRef.current.importData(last.state);
+    showToast(`已撤销：${last.label}`);
+  }, [showToast]);
+
+
   /**
    * 复制文本：优先 Clipboard API；失败时退回 execCommand，
    * 保证在没有剪贴板权限的容器里也能复制成功。
@@ -181,6 +209,44 @@ export default function App() {
       })
       .catch(() => open());
   }, []);
+
+  /* ------------------------ 快速切换面板 ------------------------ */
+  const browseTo = useCallback((group: string, tag: string | null = null) => {
+    setView('bookmarks');
+    setActiveGroup(group);
+    setActiveTag(tag);
+    setQuery('');
+  }, []);
+
+  const switcherCommands = useMemo<SwitcherCommand[]>(() => [
+    { id: 'new', label: '新建书签', run: openAddDialog },
+    {
+      id: 'theme',
+      label: settings.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
+      run: () => storeRef.current.setTheme(settings.theme === 'dark' ? 'light' : 'dark'),
+    },
+    { id: 'groups', label: '管理分组', run: () => setPanel('groups') },
+    { id: 'data', label: '数据与整理', run: () => setPanel('data') },
+    { id: 'shortcuts', label: '查看快捷键', run: () => setPanel('shortcuts') },
+    { id: 'recent-added', label: '浏览最近添加', run: () => browseTo('recent-added') },
+    { id: 'recent', label: '浏览最近访问', run: () => browseTo('recent') },
+    { id: 'read-later', label: '浏览阅读清单', run: () => browseTo('read-later') },
+    { id: 'all', label: '浏览全部书签', run: () => browseTo('all') },
+    { id: 'ungrouped', label: '浏览未分组书签', run: () => browseTo('ungrouped') },
+    {
+      id: 'tabs',
+      label: '查看当前标签页',
+      run: () => { setView('tabs'); setActiveTag(null); setQuery(''); },
+    },
+  ], [settings.theme, openAddDialog, browseTo]);
+
+  const handleSwitcherBookmark = useCallback((bm: Bookmark) => {
+    storeRef.current.visitBookmark(bm.id, bm.url);
+  }, []);
+
+  const handleSwitcherGroup = useCallback((g: Group) => {
+    browseTo(g.id);
+  }, [browseTo]);
 
   /* ------------------------ 派生数据 ------------------------ */
   const groupById = useMemo(() => {
@@ -258,10 +324,17 @@ export default function App() {
 
   const duplicates = useMemo(() => findDuplicates(bookmarks), [bookmarks]);
 
+  /** 阅读清单未读数量（侧栏角标） */
+  const unreadCount = useMemo(
+    () => bookmarks.filter((b) => b.readLater).length,
+    [bookmarks],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const subtree = activeGroup !== 'all' && activeGroup !== 'ungrouped'
       && activeGroup !== 'recent' && activeGroup !== 'recent-added'
+      && activeGroup !== 'read-later'
       ? subtreeMap.get(activeGroup)
       : null;
     let items = bookmarks.filter((b) => {
@@ -279,7 +352,7 @@ export default function App() {
       }
       return true;
     });
-    // 快捷视图：最近添加 / 最近访问
+    // 快捷视图：最近添加 / 最近访问 / 阅读清单
     if (activeGroup === 'recent-added') {
       return [...items].sort((a, b) => b.createdAt - a.createdAt).slice(0, 50);
     }
@@ -288,6 +361,11 @@ export default function App() {
         .filter((b) => b.visitedAt > 0)
         .sort((a, b) => b.visitedAt - a.visitedAt)
         .slice(0, 50);
+    }
+    if (activeGroup === 'read-later') {
+      return items
+        .filter((b) => b.readLater)
+        .sort((a, b) => b.createdAt - a.createdAt);
     }
     items = sortBookmarks(items, settings.sort);
     return items;
@@ -338,9 +416,11 @@ export default function App() {
       const target = e.target as HTMLElement;
       const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
         || target.isContentEditable;
+      // 快速切换面板打开时，键盘事件全部交给面板自身处理
+      if (switcherOpen) return;
       if (mod && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        searchRef.current?.focus();
+        setSwitcherOpen(true);
         return;
       }
       if (mod && e.key.toLowerCase() === 'a' && !typing && !panel && view === 'bookmarks') {
@@ -356,6 +436,12 @@ export default function App() {
       if (mod && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         openAddDialog();
+        return;
+      }
+      // 多级撤销：⌘Z 逐步回退（输入框内的文本撤销交给原生行为）
+      if (mod && e.key.toLowerCase() === 'z' && !typing && !panel && view === 'bookmarks') {
+        e.preventDefault();
+        performUndo();
         return;
       }
       // 列表键盘导航（仅书签视图、非输入态、无弹窗时）
@@ -400,7 +486,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [panel, query, activeTag, focusedId, filtered, selectMode, selectAll, clearSelection, toggleSelect, view, openAddDialog]);
+  }, [panel, query, activeTag, focusedId, filtered, selectMode, selectAll, clearSelection, toggleSelect, view, openAddDialog, performUndo, switcherOpen]);
 
   // 键盘焦点卡片滚入可视区
   useEffect(() => {
@@ -482,12 +568,13 @@ export default function App() {
 
   /** 整组移动：把分组挂到另一个分组下（null = 移到顶层） */
   const handleMoveGroup = (id: string, parentId: string | null) => {
-    const ok = store.moveGroup(id, parentId);
     const name = groupById.get(id)?.name ?? '分组';
+    const ok = store.moveGroup(id, parentId);
     if (!ok) {
       showToast('不能把分组移动到它自己或它的子分组里');
       return;
     }
+    pushUndo(parentId ? `移动分组「${name}」` : `把「${name}」移回顶层`);
     const target = parentId ? groupById.get(parentId)?.name : '';
     showToast(target ? `已将「${name}」移动到「${target}」` : `已将「${name}」移到顶层`);
   };
@@ -517,9 +604,11 @@ export default function App() {
   }, [activeGroup, groups]);
 
   const handleMoveToGroup = (id: string, groupId: string | null) => {
+    const target = bookmarks.find((b) => b.id === id);
+    const name = groupId === null ? '未分组' : groupById.get(groupId)?.name ?? '分组';
+    pushUndo(target ? `把「${target.title}」移到「${name}」` : `移动书签到「${name}」`);
     // 只改 groupId、保留原有顺序与位置（moveBookmark 会把书签挪到列表末尾，不适合此场景）
     store.updateBookmark(id, { groupId });
-    const name = groupId === null ? '未分组' : groupById.get(groupId)?.name ?? '分组';
     showToast(`已移动到「${name}」`);
   };
 
@@ -527,9 +616,9 @@ export default function App() {
   const handleBulkMove = (groupId: string | null) => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    const snapshot = store.state;
-    store.moveBookmarksToGroup(ids, groupId);
     const name = groupId === null ? '未分组' : groupById.get(groupId)?.name ?? '分组';
+    const snapshot = pushUndo(`移动 ${ids.length} 个书签到「${name}」`);
+    store.moveBookmarksToGroup(ids, groupId);
     clearSelection();
     showUndo(`已将 ${ids.length} 个书签移动到「${name}」`, () => store.importData(snapshot));
   };
@@ -537,7 +626,7 @@ export default function App() {
   const handleBulkTag = (tag: string) => {
     const t = tag.trim();
     if (!t || selectedIds.size === 0) return;
-    const snapshot = store.state;
+    const snapshot = pushUndo(`给 ${selectedIds.size} 个书签加标签「${t}」`);
     store.addTagToBookmarks(Array.from(selectedIds), t);
     setBulkTag('');
     setBulkTagOpen(false);
@@ -545,7 +634,7 @@ export default function App() {
   };
 
   const handleDeleteBookmark = (bm: Bookmark, label?: string) => {
-    const snapshot = store.state;
+    const snapshot = pushUndo(`删除「${bm.title}」`);
     store.deleteBookmark(bm.id);
     showUndo(label ?? `已删除「${bm.title}」`, () => store.importData(snapshot));
   };
@@ -553,7 +642,7 @@ export default function App() {
   const handleBulkDelete = () => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    const snapshot = store.state;
+    const snapshot = pushUndo(`删除 ${ids.length} 个书签`);
     store.deleteBookmarks(ids);
     clearSelection();
     showUndo(`已删除 ${ids.length} 个书签`, () => store.importData(snapshot));
@@ -886,7 +975,7 @@ export default function App() {
             <IconClose size={15} />
           </button>
         ) : (
-          <kbd className="kbd">⌘K</kbd>
+          <kbd className="kbd">/</kbd>
         )}
       </div>
 
@@ -934,6 +1023,15 @@ export default function App() {
             >
               <IconClock size={15} />
               <span>最近访问</span>
+            </button>
+            <button
+              className={`nav-item ${view === 'bookmarks' && activeGroup === 'read-later' ? 'nav-item--active' : ''}`}
+              onClick={() => { setView('bookmarks'); setActiveGroup('read-later'); setActiveTag(null); }}
+              title="标记为「稍后阅读」的书签，打开后自动移出"
+            >
+              <IconReadingList size={15} />
+              <span>阅读清单</span>
+              <em>{unreadCount || ''}</em>
             </button>
           </div>
 
@@ -1191,7 +1289,9 @@ export default function App() {
                           ? '最近访问'
                           : activeGroup === 'recent-added'
                             ? '最近添加'
-                            : groupById.get(activeGroup)?.name ?? '书签'}
+                            : activeGroup === 'read-later'
+                              ? '阅读清单'
+                              : groupById.get(activeGroup)?.name ?? '书签'}
               </h1>
               <span>
                 {view === 'tabs'
@@ -1319,9 +1419,11 @@ export default function App() {
                 variant={
                   bookmarks.length === 0
                     ? 'first'
-                    : activeGroup === 'recent' && !query && !activeTag
-                      ? 'recent'
-                      : 'filtered'
+                    : activeGroup === 'read-later' && !query && !activeTag
+                      ? 'reading'
+                      : activeGroup === 'recent' && !query && !activeTag
+                        ? 'recent'
+                        : 'filtered'
                 }
                 onImport={() => void importFromEmptyState()}
                 onSaveCurrent={openAddDialog}
@@ -1334,6 +1436,7 @@ export default function App() {
                 <BookmarkRow
                   key={bm.id}
                   bookmark={bm}
+                  query={query}
                   group={bm.groupId ? groupById.get(bm.groupId) : undefined}
                   groupPathText={bm.groupId ? groupPathText.get(bm.groupId) : undefined}
                   groups={groups}
@@ -1350,6 +1453,10 @@ export default function App() {
                   onRequestCreateGroup={requestCreateGroup}
                   onDelete={(b) => handleDeleteBookmark(b)}
                   onTogglePin={(b) => store.togglePin(b.id)}
+                  onToggleReadLater={(b) => {
+                    store.setReadLater(b.id, !b.readLater);
+                    showToast(b.readLater ? '已移出阅读清单' : '已加入阅读清单，打开后自动移出');
+                  }}
                   onCopyLink={(b) => {
                     void copyText(b.url).then((ok) => {
                       showToast(ok ? '链接已复制' : `复制失败：${b.url}`);
@@ -1414,8 +1521,8 @@ export default function App() {
         onRename={(id, name) => store.updateGroup(id, { name })}
         onRecolor={(id, color) => store.updateGroup(id, { color })}
         onDelete={(id) => {
-          const snapshot = store.state;
           const name = groupById.get(id)?.name ?? '分组';
+          const snapshot = pushUndo(`删除分组「${name}」`);
           store.deleteGroup(id);
           showUndo(`已删除「${name}」，书签与子分组已上移一级`, () => store.importData(snapshot));
         }}
@@ -1426,13 +1533,13 @@ export default function App() {
         tags={tagCounts}
         onClose={() => setTagPanelOpen(false)}
         onRename={(from, to) => {
-          const snapshot = store.state;
+          const snapshot = pushUndo(`重命名标签「${from}」为「${to}」`);
           store.renameTag(from, to);
           if (activeTag === from) setActiveTag(to.trim());
           showUndo(`已把标签「${from}」改为「${to}」`, () => store.importData(snapshot));
         }}
         onDelete={(tag) => {
-          const snapshot = store.state;
+          const snapshot = pushUndo(`删除标签「${tag}」`);
           store.deleteTag(tag);
           if (activeTag === tag) setActiveTag(null);
           showUndo(`已删除标签「${tag}」`, () => store.importData(snapshot));
@@ -1475,6 +1582,22 @@ export default function App() {
           showToast(`已清理 ${ids.length} 个重复书签`);
         }}
         onImportBrowser={handleImportBrowser}
+        onDeleteBookmarks={(ids) => {
+          const snapshot = pushUndo(`删除 ${ids.length} 个死链书签`);
+          store.deleteBookmarks(ids);
+          showUndo(`已删除 ${ids.length} 个书签`, () => store.importData(snapshot));
+        }}
+        onApplyTemplate={(names) => {
+          const existing = new Set(store.state.groups.map((g) => g.name));
+          const missing = names.filter((n) => !existing.has(n));
+          if (!missing.length) return 0;
+          pushUndo(`套用分组模板（新建 ${missing.length} 个分组）`);
+          const base = store.state.groups.length;
+          missing.forEach((name, i) => {
+            store.addGroup({ name, color: PALETTE[(base + i) % PALETTE.length] });
+          });
+          return missing.length;
+        }}
       />
       {sortAnchor && (
         <SortMenu
@@ -1488,6 +1611,15 @@ export default function App() {
         />
       )}
       <ShortcutsDialog open={panel === 'shortcuts'} onClose={() => setPanel(null)} />
+      <QuickSwitcher
+        open={switcherOpen}
+        bookmarks={bookmarks}
+        groups={groups}
+        commands={switcherCommands}
+        onClose={() => setSwitcherOpen(false)}
+        onPickBookmark={handleSwitcherBookmark}
+        onPickGroup={handleSwitcherGroup}
+      />
       <GroupCreateDialog
         open={createGroupOpen}
         parentName={createParentId ? groupById.get(createParentId)?.name ?? null : null}
@@ -1525,90 +1657,4 @@ export default function App() {
     if (!isRealGroup(activeGroup)) return target.groupId;
     return activeGroup;
   }
-}
-
-function EmptyState({
-  variant, onImport, onSaveCurrent, onAdd, onClear, onBrowseAll,
-}: {
-  variant: 'first' | 'recent' | 'filtered';
-  onImport: () => void;
-  onSaveCurrent: () => void;
-  onAdd: () => void;
-  onClear: () => void;
-  onBrowseAll: () => void;
-}) {
-  if (variant === 'recent') {
-    return (
-      <div className="empty">
-        <div className="empty__art"><IconClock size={28} /></div>
-        <h2>还没有访问记录</h2>
-        <p>「最近访问」统计的是在 Marknest 里点开过的书签，浏览器地址栏直接访问不会计入。</p>
-        <button className="btn btn--ghost btn--sm" onClick={onBrowseAll}>去看全部书签</button>
-      </div>
-    );
-  }
-  if (variant === 'filtered') {
-    return (
-      <div className="empty">
-        <div className="empty__art"><IconBookmark size={30} /></div>
-        <h2>没有匹配的书签</h2>
-        <p>换个关键词，或清除当前的搜索、分组与标签筛选。</p>
-        <button className="btn btn--primary btn--sm" onClick={onClear}>清除搜索与筛选</button>
-      </div>
-    );
-  }
-  return (
-    <div className="empty empty--first">
-      <div className="empty__art"><IconBookmark size={30} /></div>
-      <h2>把书签搬过来</h2>
-      <p>一次性导入 Chrome 里已有的书签，文件夹会原样变成分组；之后用「收藏当前页」随手收新链接。</p>
-      <div className="empty__actions">
-        <button className="btn btn--primary" onClick={onImport}>
-          <IconDownload size={15} /> 导入 Chrome 书签
-        </button>
-        <button className="btn btn--ghost" onClick={onSaveCurrent}>
-          <IconPlus size={15} /> 收藏当前页面
-        </button>
-        <button className="empty__link" onClick={onAdd}>手动添加一个</button>
-      </div>
-    </div>
-  );
-}
-
-function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
-  if (!open) return null;
-  const rows = [
-    ['⌘ / Ctrl + K', '聚焦搜索框'],
-    ['/', '快速搜索'],
-    ['⌘ / Ctrl + N', '新建书签'],
-    ['↑ / ↓', '在列表中移动焦点'],
-    ['Enter', '打开当前焦点的书签'],
-    ['X', '多选当前书签'],
-    ['⌘ / Ctrl + A', '全选当前列表'],
-    ['Esc', '退出多选 / 清除搜索 / 关闭弹窗'],
-    ['拖拽书签', '调整顺序；拖到分组上直接归类'],
-    ['拖拽分组', '拖到另一分组上变成子分组；拖到「分组」标题移回顶层'],
-    ['右键菜单', '快速收藏当前页面或链接'],
-  ];
-  return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label="快捷键" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modal__head">
-          <h2 className="modal__title">快捷键</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="关闭"><IconClose size={18} /></button>
-        </div>
-        <div className="modal__body">
-          <div className="shortcuts">
-            {rows.map(([key, desc]) => (
-              <div key={key} className="shortcut-row">
-                <kbd className="kbd">{key}</kbd>
-                <span>{desc}</span>
-              </div>
-            ))}
-          </div>
-          <p className="hint hint--foot">提示：在网页上右键可直接使用「收藏此页面到 Marknest」。</p>
-        </div>
-      </div>
-    </div>
-  );
 }

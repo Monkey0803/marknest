@@ -17,6 +17,10 @@ export interface Bookmark {
   visitedAt: number;
   visits: number;
   pinned: boolean;
+  /** 阅读清单：true 表示稍后阅读；打开链接后自动清除 */
+  readLater?: boolean;
+  /** 标记已读 / 移出阅读清单的时间 */
+  readAt?: number;
   /** 手动排序时的序号，越小越靠前 */
   order: number;
 }

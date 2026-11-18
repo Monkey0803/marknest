@@ -39,6 +39,14 @@ export const IconBookmark = ({ size = 18, ...p }: IconProps) => (
   </svg>
 );
 
+/** 阅读清单：书签 + 时钟 */
+export const IconReadingList = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M6 3h10a2 2 0 0 1 2 2v9h-2V5H6v16l5-3.4 1.2.8-1.9 1.3L6 21z" />
+    <path d="M17.5 13a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9zm0 1.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm-.7.8h1v2.2l1.6 1-.5.8-2.1-1.3z" />
+  </svg>
+);
+
 export const IconFolder = ({ size = 18, ...p }: IconProps) => (
   <svg {...base(size)} {...p}>
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />

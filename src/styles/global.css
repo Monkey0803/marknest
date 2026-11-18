@@ -422,6 +422,20 @@ button { cursor: pointer; }
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere;
 }
+
+/* 搜索命中高亮：柔和的荧光笔效果，两种主题都保持可读 */
+.bm__hl {
+  background: rgba(154, 123, 63, 0.24);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+  margin: 0 -1px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+:root[data-theme="dark"] .bm__hl {
+  background: rgba(213, 178, 110, 0.32);
+}
 .bm__pin-mark { color: var(--gold); flex-shrink: 0; }
 .bm__url {
   display: block; margin-top: 2px;
@@ -572,6 +586,43 @@ button { cursor: pointer; }
   max-height: 92vh; display: flex; flex-direction: column;
 }
 .modal--wide { max-width: 480px; }
+
+/* ---- Quick Switcher（⌘K 快速切换） ---- */
+.modal--switcher { width: min(460px, calc(100vw - 32px)); max-width: none; padding: 0; }
+.modal__head--flush {
+  display: flex; align-items: center; gap: 9px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.switcher__icon { color: var(--muted); flex: none; }
+.switcher__input {
+  flex: 1; min-width: 0; border: none; background: transparent; outline: none;
+  font: inherit; font-size: 14px; color: var(--ink);
+}
+.switcher__input::placeholder { color: var(--muted); }
+.switcher__list { max-height: 320px; overflow-y: auto; padding: 6px; }
+.switcher__row {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border: none; background: transparent;
+  border-radius: var(--r-sm); cursor: pointer; text-align: left;
+  font: inherit; color: var(--ink);
+}
+.switcher__row.is-active { background: var(--accent-soft); }
+.switcher__kind { flex: none; width: 16px; display: flex; justify-content: center; color: var(--muted); }
+.switcher__label {
+  flex: 1; min-width: 0; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.switcher__hint {
+  flex: none; max-width: 45%; font-size: 11px; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.switcher__empty { padding: 22px; text-align: center; color: var(--muted); font-size: 12.5px; }
+.switcher__foot {
+  display: flex; gap: 14px; padding: 8px 12px;
+  border-top: 1px solid var(--line); font-size: 11px; color: var(--muted);
+}
+.switcher__foot span { display: inline-flex; align-items: center; gap: 4px; }
+
 @keyframes pop { from { opacity: 0; transform: translateY(12px) scale(0.985); } to { opacity: 1; transform: none; } }
 .modal__head {
   display: flex; align-items: center; justify-content: space-between;
@@ -748,6 +799,43 @@ button { cursor: pointer; }
   border-left: 2px solid var(--danger);
 }
 .dup-box p { margin: 0; font-size: 11px; color: var(--ink-2); }
+
+/* ---- 书签健康检查 ---- */
+.health-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.health-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent);
+  font-size: 11px;
+}
+.health-chip--muted { background: var(--surface-2); color: var(--ink-2); }
+.health-list { list-style: none; margin: 8px 0; padding: 0; }
+.health-list__row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 0; border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+}
+.health-list__row:last-child { border-bottom: none; }
+.health-list__title {
+  flex: 1; min-width: 0; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.health-list__host {
+  flex: none; max-width: 30%; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.health-list__err { flex: none; color: var(--danger); font-size: 10.5px; }
+
+/* ---- 分组模板 ---- */
+.template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.data-action--row {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto;
+  column-gap: 8px; align-items: center; text-align: left;
+}
+.data-action--row svg { grid-row: 1 / 3; }
+.data-action--row small { grid-column: 2; }
+
+
 
 /* Shortcuts */
 .shortcuts { display: flex; flex-direction: column; gap: 2px; }

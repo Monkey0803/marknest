@@ -198,6 +198,31 @@ export function isValidUrl(input: string): boolean {
   }
 }
 
+/* ----------------------- 搜索命中高亮 ----------------------- */
+
+export interface HighlightSegment {
+  text: string;
+  hit: boolean;
+}
+
+/**
+ * 把文本按查询词的命中位置切成片段（大小写不敏感，只取第一段连续命中，
+ * 中文/英文关键词都能覆盖）。无命中时返回整段未命中，调用方可直接渲染原文。
+ */
+export function highlightSegments(text: string, query: string): HighlightSegment[] {
+  const q = query.trim().toLowerCase();
+  if (!q || !text) return [{ text, hit: false }];
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx < 0) return [{ text, hit: false }];
+  const segs: HighlightSegment[] = [];
+  if (idx > 0) segs.push({ text: text.slice(0, idx), hit: false });
+  segs.push({ text: text.slice(idx, idx + q.length), hit: true });
+  const rest = text.slice(idx + q.length);
+  if (rest) segs.push({ text: rest, hit: false });
+  return segs;
+}
+
 export function relativeTime(ts: number): string {
   if (!ts) return '尚未同步';
   const diff = Date.now() - ts;
