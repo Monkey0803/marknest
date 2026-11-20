@@ -25,6 +25,8 @@ interface Props {
   selected?: boolean;
   /** 键盘导航的当前焦点卡片 */
   focused?: boolean;
+  /** 「定位当前页面书签」命中后的临时高亮 */
+  located?: boolean;
   onToggleSelect?: (bm: Bookmark) => void;
   onOpen: (bm: Bookmark) => void;
   onEdit: (bm: Bookmark) => void;
@@ -53,38 +55,49 @@ function Hl({ text, query }: { text: string; query?: string }) {
   );
 }
 
-function Favicon({ bm }: { bm: Bookmark }) {  // 依次尝试候选图标地址，全部失败才回退首字母；key 绑定 url 以便切换书签时重置状态
+function Favicon({ bm }: { bm: Bookmark }) {
+  // 依次尝试候选图标地址；首字母色块始终垫底，图标加载成功后才淡入覆盖，
+  // 切换候选时不会再出现空白/破图闪烁。key 绑定 url 以便切换书签时重置状态
   const candidates = React.useMemo(() => faviconCandidates(bm), [bm.url, bm.favicon]);
   const [idx, setIdx] = React.useState(0);
-  React.useEffect(() => setIdx(0), [bm.url, bm.favicon]);
+  const [loadedSrc, setLoadedSrc] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    setIdx(0);
+    setLoadedSrc(null);
+  }, [bm.url, bm.favicon]);
 
   const color = colorFromString(getHost(bm.url));
   const letter = (bm.title || getHost(bm.url)).charAt(0).toUpperCase();
-  if (idx < candidates.length) {
-    return (
-      <img
-        key={`${bm.id}-${idx}`}
-        src={candidates[idx]}
-        className="bm-favicon"
-        alt=""
-        loading="lazy"
-        decoding="async"
-        onLoad={() => rememberFavicon(bm.url, candidates[idx])}
-        onError={() => setIdx((i) => i + 1)}
-        referrerPolicy="no-referrer"
-      />
-    );
-  }
+  const src = idx < candidates.length ? candidates[idx] : null;
+
   return (
-    <span className="bm-favicon bm-favicon--fallback" style={{ background: color }}>
-      {letter}
+    <span className="bm-favicon-wrap">
+      <span className="bm-favicon bm-favicon--fallback" style={{ background: color }} aria-hidden>
+        {letter}
+      </span>
+      {src && (
+        <img
+          key={`${bm.id}-${idx}`}
+          src={src}
+          className={`bm-favicon bm-favicon--remote ${loadedSrc === src ? 'is-loaded' : ''}`}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onLoad={() => {
+            rememberFavicon(bm.url, src);
+            setLoadedSrc(src);
+          }}
+          onError={() => setIdx((i) => i + 1)}
+          referrerPolicy="no-referrer"
+        />
+      )}
     </span>
   );
 }
 
 export default function BookmarkRow({
   bookmark: bm, group, groupPathText, groups, allBookmarks, view, highlighted, query,
-  selectMode, selected, focused, onToggleSelect, onOpen, onEdit, onDelete,
+  selectMode, selected, focused, located, onToggleSelect, onOpen, onEdit, onDelete,
   onTogglePin, onToggleReadLater, onCopyLink, onMoveToGroup, onRequestCreateGroup, onTagClick,
   onDragStart, onDragOver, onDrop, onDragEnd, isDragging,
 }: Props) {
@@ -96,7 +109,7 @@ export default function BookmarkRow({
   return (
     <article
       data-bm-id={bm.id}
-      className={`bm bm--${view} ${isDragging ? 'bm--dragging' : ''} ${highlighted ? 'bm--hl' : ''} ${bm.pinned ? 'bm--pinned' : ''} ${selected ? 'bm--selected' : ''} ${focused ? 'bm--focused' : ''} ${selectMode ? 'bm--select' : ''}`}
+      className={`bm bm--${view} ${isDragging ? 'bm--dragging' : ''} ${highlighted ? 'bm--hl' : ''} ${bm.pinned ? 'bm--pinned' : ''} ${selected ? 'bm--selected' : ''} ${focused ? 'bm--focused' : ''} ${located ? 'bm--located' : ''} ${selectMode ? 'bm--select' : ''}`}
       draggable={!selectMode}
       aria-selected={selected || undefined}
       onDragStart={(e) => {

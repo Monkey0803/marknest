@@ -395,6 +395,12 @@ button { cursor: pointer; }
 .bm:hover { border-color: var(--line-strong); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .bm--dragging { opacity: 0.4; }
 .bm--hl { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+/* 「定位当前页面书签」命中：短暂脉冲，3 秒后自动褪去 */
+.bm--located { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 3px var(--accent-soft); z-index: 2; animation: bm-locate-pulse 0.9s ease-in-out 2; }
+@keyframes bm-locate-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--accent-soft); }
+  50% { box-shadow: 0 0 0 8px transparent; }
+}
 .bm--pinned::before {
   content: ''; position: absolute; left: -1px; top: 9px; bottom: 9px;
   width: 2px; border-radius: 2px; background: var(--gold);
@@ -408,6 +414,11 @@ button { cursor: pointer; }
   object-fit: contain; background: var(--paper); padding: 4px;
   border: 1px solid var(--line);
 }
+/* 图标容器：首字母占位垫底，真实图标加载成功后淡入覆盖，避免候选切换时闪烁 */
+.bm-favicon-wrap { position: relative; width: 30px; height: 30px; flex-shrink: 0; }
+.bm-favicon-wrap .bm-favicon { position: absolute; inset: 0; }
+.bm-favicon--remote { opacity: 0; transition: opacity 0.18s var(--ease); }
+.bm-favicon--remote.is-loaded { opacity: 1; }
 .bm-favicon--fallback {
   display: grid; place-items: center; padding: 0;
   color: var(--paper); font-family: var(--font-display); font-weight: 600; font-size: 14px;
@@ -617,6 +628,11 @@ button { cursor: pointer; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .switcher__empty { padding: 22px; text-align: center; color: var(--muted); font-size: 12.5px; }
+/* 结果被截断时的提示：让用户知道还有更多命中，而不是误以为「搜不到」 */
+.switcher__more {
+  margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line);
+  font-size: 10.5px; color: var(--muted); text-align: center;
+}
 .switcher__foot {
   display: flex; gap: 14px; padding: 8px 12px;
   border-top: 1px solid var(--line); font-size: 11px; color: var(--muted);
@@ -648,7 +664,22 @@ button { cursor: pointer; }
 .input--select { appearance: none; background-image: none; cursor: pointer; }
 .input--inline { height: 28px; padding: 0 8px; font-size: 11.5px; }
 .form-error { margin: 0; color: var(--danger); font-size: 11px; }
+/* URL 实时校验：紧贴输入框下方，输入中即可见，避免提交才知道出错 */
+.form-error--inline { margin-top: -2px; }
 .modal__actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 6px; }
+
+/* 删除分组确认弹窗 */
+.modal--confirm { width: min(400px, calc(100vw - 32px)); }
+.confirm__lead { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.6; }
+.confirm__impact {
+  margin: 0; padding: 12px 14px; list-style: none;
+  background: var(--danger-soft); border: 1px solid var(--danger); border-radius: var(--r-sm);
+  display: flex; flex-direction: column; gap: 8px;
+}
+.confirm__impact li { font-size: 12px; color: var(--ink); line-height: 1.5; padding-left: 14px; position: relative; }
+.confirm__impact li::before { content: ''; position: absolute; left: 2px; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--danger); }
+.confirm__impact strong { font-family: var(--font-mono); color: var(--danger); font-size: 13px; }
+.confirm__note { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.5; }
 
 /* Tag editor */
 .tag-editor {
@@ -1078,7 +1109,12 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 
 /* 触屏/无 hover 设备：常显操作按钮，避免「找不到入口」 */
 @media (hover: none) {
-  .bm__actions { opacity: 0.9; pointer-events: auto; }
+  .bm__actions {
+    opacity: 1; pointer-events: auto; transform: none;
+    background: var(--surface-2);
+  }
+  .bm__main { padding-bottom: 42px; }
+  .bm--grid .bm__main { padding-bottom: 44px; }
   .nav-group__open { opacity: 1; pointer-events: auto; }
   .nav-group .nav-item { padding-right: 22px; }
   .nav-group .nav-item em { display: none; }

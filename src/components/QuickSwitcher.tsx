@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Bookmark, Group } from '../types';
 import { getHost, groupPath } from '../lib/utils';
+import { useModalFocus } from '../lib/useModalFocus';
 import { IconSearch, IconBookmark, IconFolder, IconTabs, IconClose } from './Icons';
 
 export interface SwitcherCommand {
@@ -35,6 +36,8 @@ export default function QuickSwitcher({
   const [idx, setIdx] = React.useState(0);
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
+  const modalRef = React.useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
 
   React.useEffect(() => {
     if (open) {
@@ -45,12 +48,13 @@ export default function QuickSwitcher({
     }
   }, [open]);
 
-  const rows = React.useMemo<Row[]>(() => {
+  const { rows, totalMatches } = React.useMemo(() => {
     const query = q.trim().toLowerCase();
     const match = (text: string) => !query || text.toLowerCase().includes(query);
     const out: Row[] = [];
+    let total = 0;
     commands.forEach((c) => {
-      if (match(c.label)) out.push({ kind: 'cmd', id: `c-${c.id}`, label: c.label, run: c.run });
+      if (match(c.label)) { out.push({ kind: 'cmd', id: `c-${c.id}`, label: c.label, run: c.run }); total += 1; }
     });
     groups.forEach((g) => {
       if (match(g.name)) {
@@ -60,17 +64,19 @@ export default function QuickSwitcher({
           group: g,
           pathText: groupPath(groups, g.id).map((p) => p.name).join(' / '),
         });
+        total += 1;
       }
     });
-    let bmCount = 0;
     for (const bm of bookmarks) {
-      if (bmCount >= 10) break;
       if (match(`${bm.title} ${bm.url}`)) {
-        out.push({ kind: 'bm', id: `b-${bm.id}`, bm });
-        bmCount += 1;
+        total += 1;
+        // 列表最多展示 10 条书签，但 totalMatches 反映真实命中数
+        if (out.filter((r) => r.kind === 'bm').length < 10) {
+          out.push({ kind: 'bm', id: `b-${bm.id}`, bm });
+        }
       }
     }
-    return out.slice(0, 14);
+    return { rows: out.slice(0, 14), totalMatches: total };
   }, [q, commands, groups, bookmarks]);
 
   // 输入变化后光标回到第一项
@@ -96,6 +102,8 @@ export default function QuickSwitcher({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal modal--switcher"
         role="dialog"
         aria-modal="true"
@@ -159,6 +167,11 @@ export default function QuickSwitcher({
                 )}
               </button>
             ))
+          )}
+          {totalMatches > rows.length && (
+            <p className="switcher__more">
+              还有 {totalMatches - rows.length} 条结果未显示，输入更多关键词缩小范围
+            </p>
           )}
         </div>
         <div className="switcher__foot">

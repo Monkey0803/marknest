@@ -3,6 +3,7 @@ import type { AppState, Bookmark } from '../types';
 import { exportToHtml, getHost, relativeTime } from '../lib/utils';
 import { downloadFile } from '../lib/utils';
 import { getDiagnostic, type SyncDiagnostic } from '../lib/storage';
+import { useModalFocus } from '../lib/useModalFocus';
 import { checkLinks, healthStats, type LinkCheckResult } from '../lib/health';
 import { IconClose, IconDownload, IconUpload, IconSparkle, IconTrash, IconCloudCheck, IconCheck, IconFolderPlus } from './Icons';
 
@@ -48,6 +49,8 @@ export default function DataDialog({
   const [checking, setChecking] = useState<{ done: number; total: number } | null>(null);
   const [deadLinks, setDeadLinks] = useState<LinkCheckResult[]>([]);
   const [healthNote, setHealthNote] = useState('');
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
 
   useEffect(() => {
     if (!open) return;
@@ -191,6 +194,8 @@ export default function DataDialog({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal modal--wide"
         role="dialog"
         aria-modal="true"

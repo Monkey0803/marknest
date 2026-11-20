@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { Group } from '../types';
 import { buildGroupTree, flattenGroupTree, groupSubtreeIds } from '../lib/utils';
+import { useModalFocus } from '../lib/useModalFocus';
 import {
   IconClose, IconTrash, IconPencil, IconPlus, IconMoveTo, IconFolderPlus,
 } from './Icons';
@@ -27,6 +28,8 @@ export default function GroupDialog({
   const [editingName, setEditingName] = useState('');
   /** 移动到分组的菜单：记录被移动的分组与按钮位置 */
   const [moveState, setMoveState] = useState<{ id: string; rect: DOMRect } | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
 
   if (!open) return null;
 
@@ -35,6 +38,8 @@ export default function GroupDialog({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal modal--wide"
         role="dialog"
         aria-modal="true"

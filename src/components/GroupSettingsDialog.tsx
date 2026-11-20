@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Group } from '../types';
 import { groupSubtreeIds } from '../lib/utils';
+import { useModalFocus } from '../lib/useModalFocus';
 import { PALETTE } from './GroupCreateForm';
 import { IconCheck, IconClose, IconTrash, IconFolderPlus, IconMoveTo } from './Icons';
 import SaveToGroupMenu from './SaveToGroupMenu';
@@ -28,6 +29,8 @@ export default function GroupSettingsDialog({
   const [color, setColor] = useState('');
   /** 移动到分组的菜单锚点 */
   const [moveAnchor, setMoveAnchor] = useState<DOMRect | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(!!group, modalRef);
 
   useEffect(() => {
     if (group) {
@@ -43,6 +46,8 @@ export default function GroupSettingsDialog({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal"
         role="dialog"
         aria-modal="true"

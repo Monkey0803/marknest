@@ -272,3 +272,12 @@ export const IconOpenWindow = ({ size = 18, ...p }: IconProps) => (
     <path d="M13 13h8m0 0-2.5-2.5M21 13l-2.5 2.5" />
   </svg>
 );
+
+/** 定位：准星，用于「在当前页面找到对应书签」 */
+export const IconLocate = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <circle cx="12" cy="12" r="7" />
+    <circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+    <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+  </svg>
+);

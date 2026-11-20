@@ -3,7 +3,7 @@ import type { Bookmark, Group } from '../types';
 import { colorFromString, getHost } from '../lib/utils';
 import type { NewBookmarkInput } from '../store/useBookmarkStore';
 import {
-  IconTabs, IconRefresh, IconPlus, IconCheck, IconExternal, IconSearch, IconClose,
+  IconTabs, IconRefresh, IconPlus, IconCheck, IconExternal, IconSearch, IconClose, IconLocate,
 } from './Icons';
 import GroupPicker from './GroupPicker';
 import SaveToGroupMenu from './SaveToGroupMenu';
@@ -26,6 +26,8 @@ interface Props {
   onAddOne: (input: NewBookmarkInput) => void;
   onAddMany: (inputs: NewBookmarkInput[]) => void;
   onOpenTab: (tabId: number, windowId?: number) => void;
+  /** 在书签库中定位指定网址（当前活动标签行提供入口） */
+  onLocate?: (url: string, title?: string) => void;
   onCount?: (n: number) => void;
 }
 
@@ -45,7 +47,7 @@ function TabFavicon({ tab }: { tab: OpenTab }) {
 
 export default function TabsPanel({
   bookmarks, groups, defaultGroupId = null, onRequestCreate,
-  onAddOne, onAddMany, onOpenTab, onCount,
+  onAddOne, onAddMany, onOpenTab, onLocate, onCount,
 }: Props) {
   const [tabs, setTabs] = useState<OpenTab[]>([]);
   const [loading, setLoading] = useState(true);
@@ -236,6 +238,16 @@ export default function TabsPanel({
                     <span className="tab-row__url">{getHost(tab.url)}</span>
                   </span>
                 </span>
+                {tab.active && onLocate && (
+                  <button
+                    className="icon-btn icon-btn--sm tab-row__locate"
+                    onClick={(e) => { e.stopPropagation(); onLocate(tab.url, tab.title); }}
+                    title="在书签中定位当前页面"
+                    aria-label="在书签中定位当前页面"
+                  >
+                    <IconLocate size={13} />
+                  </button>
+                )}
                 {saved ? (
                   <span className="tab-row__saved" title="已收藏">
                     <IconCheck size={13} /> 已收藏

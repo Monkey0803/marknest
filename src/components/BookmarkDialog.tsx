@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Bookmark, Group } from '../types';
 import { getHost, isValidUrl, normalizeUrl } from '../lib/utils';
+import { useModalFocus } from '../lib/useModalFocus';
 import { IconClose, IconTag } from './Icons';
 import GroupPicker from './GroupPicker';
 
@@ -42,7 +43,10 @@ export default function BookmarkDialog({
   const [tagInput, setTagInput] = useState('');
   const [tags, setTags] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const [urlTouched, setUrlTouched] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
 
   useEffect(() => {
     if (!open) return;
@@ -53,6 +57,7 @@ export default function BookmarkDialog({
     setTags(editing?.tags ?? []);
     setTagInput('');
     setError('');
+    setUrlTouched(false);
     setTimeout(() => titleRef.current?.focus(), 30);
   }, [open, editing, defaultGroupId, preset]);
 
@@ -84,10 +89,14 @@ export default function BookmarkDialog({
     .filter((t) => !tags.includes(t) && (!tagQuery || t.toLowerCase().includes(tagQuery)))
     .slice(0, tagQuery ? 6 : 5);
 
+  /** 实时 URL 校验：输入过（失焦或提交后）才提示，避免刚打开就报错；输入合法即时消除 */
+  const liveUrlInvalid = urlTouched && url.trim().length > 0 && !isValidUrl(url);
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
+    setUrlTouched(true);
     if (!url.trim() || !isValidUrl(url)) {
-      setError('请输入有效的网址（例如 example.com）');
+      setError(url.trim() ? '请输入有效的网址（例如 example.com）' : '请填写网址');
       return;
     }
     onSave({
@@ -102,6 +111,8 @@ export default function BookmarkDialog({
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal"
         role="dialog"
         aria-modal="true"
@@ -122,13 +133,23 @@ export default function BookmarkDialog({
               className="input"
               value={url}
               onChange={(e) => {
-                setUrl(e.target.value);
-                setError('');
+                const next = e.target.value;
+                setUrl(next);
+                // 输入已合法时即时清除提交残留的错误提示
+                if (error && isValidUrl(next)) setError('');
               }}
+              onBlur={() => setUrlTouched(true)}
               placeholder="https://example.com"
               autoComplete="off"
               spellCheck={false}
+              aria-invalid={liveUrlInvalid || !!error || undefined}
+              aria-describedby={liveUrlInvalid || error ? 'url-field-error' : undefined}
             />
+            {(liveUrlInvalid || error) && (
+              <p id="url-field-error" className="form-error form-error--inline" role="alert">
+                {error || '网址格式看起来不正确，例如 example.com'}
+              </p>
+            )}
           </label>
 
           <label className="field">
@@ -212,8 +233,6 @@ export default function BookmarkDialog({
               </div>
             )}
           </div>
-
-          {error && <p className="form-error" role="alert">{error}</p>}
 
           <div className="modal__actions">
             <button type="button" className="btn btn--ghost" onClick={onClose}>取消</button>

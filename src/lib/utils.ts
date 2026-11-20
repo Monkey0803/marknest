@@ -4,6 +4,12 @@ export function uid(): string {
   return crypto.randomUUID();
 }
 
+/** 侧栏数字角标：0 不显示，超过 99 显示「99+」，避免撑破角标布局 */
+export function formatCount(n: number): string {
+  if (!n || n <= 0) return '';
+  return n > 99 ? '99+' : String(n);
+}
+
 /* ----------------------- 分组树（支持任意层级） ----------------------- */
 
 export interface GroupNode {

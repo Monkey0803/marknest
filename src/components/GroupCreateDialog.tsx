@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { useModalFocus } from '../lib/useModalFocus';
 import { IconClose, IconFolderPlus } from './Icons';
 import GroupCreateForm from './GroupCreateForm';
 
@@ -17,6 +18,9 @@ interface Props {
  * 保证「同一个面板」的一致体验与舒展排版。
  */
 export default function GroupCreateDialog({ open, parentName, onSubmit, onClose }: Props) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -34,6 +38,8 @@ export default function GroupCreateDialog({ open, parentName, onSubmit, onClose 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal gcd"
         role="dialog"
         aria-modal="true"

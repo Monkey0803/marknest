@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useModalFocus } from '../lib/useModalFocus';
 import { IconClose, IconTag, IconTrash, IconCheck, IconMerge } from './Icons';
 
 interface DuplicateTagGroup {
@@ -82,10 +83,15 @@ function TagRow({
 export default function TagDialog({
   open, tags, duplicates = [], onMerge, onClose, onRename, onDelete,
 }: Props) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  useModalFocus(open, modalRef);
+
   if (!open) return null;
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
       <div
+        ref={modalRef}
+        tabIndex={-1}
         className="modal"
         role="dialog"
         aria-modal="true"
