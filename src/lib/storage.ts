@@ -102,7 +102,7 @@ function slimBookmarks(bookmarks: Bookmark[]): Bookmark[] {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'light',
+  theme: 'system',
   view: 'list',
   sort: 'manual',
   lastSyncedAt: 0,
@@ -194,6 +194,17 @@ export async function loadState(): Promise<AppState> {
     ...DEFAULT_SETTINGS,
     ...((settingsData[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}),
   };
+
+  // 一次性迁移：老版本默认固定浅色，升级后默认跟随浏览器。
+  // 用本地标记确保只改一次，之后用户显式选择的浅色/深色都会被尊重。
+  const THEME_FOLLOW_MIGRATED = 'mn:themeFollowMigrated';
+  if (!localStorage.getItem(THEME_FOLLOW_MIGRATED)) {
+    localStorage.setItem(THEME_FOLLOW_MIGRATED, '1');
+    if (settings.theme === 'light') {
+      settings.theme = 'system';
+      await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
+    }
+  }
 
   if (meta.format === 3) {
     // v3：书签分组各自独立 gzip，分组（文件夹）为单流切块

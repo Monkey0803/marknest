@@ -40,7 +40,7 @@ export default function ShortcutsDialog({ open, onClose }: { open: boolean; onCl
               </div>
             ))}
           </div>
-          <p className="hint hint--foot">提示：在网页上右键可直接使用「收藏此页面到 Marknest」。</p>
+          <p className="hint hint--foot">提示：在网页上右键可直接使用「收藏此页面到 Marknest」。顶栏主题按钮按「浅色 → 深色 → 跟随浏览器」三态循环。</p>
         </div>
       </div>
     </div>

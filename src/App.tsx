@@ -26,7 +26,7 @@ import {
   IconSun, IconMoon, IconMaximize, IconClock, IconKeyboard,
   IconBookmark, IconClose, IconTabs, IconOpenWindow, IconChevron,
   IconSparkle, IconCheck, IconMoveTo, IconTrash, IconMenu, IconSort, IconArchive,
-  IconReadingList, IconPencil, IconLocate,
+  IconReadingList, IconPencil, IconLocate, IconThemeAuto,
 } from './components/Icons';
 import SortMenu from './components/SortMenu';
 import EmptyState from './components/EmptyState';
@@ -117,6 +117,12 @@ export default function App() {
       return () => mq.removeEventListener('change', listener);
     }
     apply(settings.theme === 'dark');
+  }, [settings.theme]);
+
+  /** 主题三态循环：浅色 → 深色 → 跟随浏览器 → 浅色 */
+  const cycleTheme = useCallback(() => {
+    const next = settings.theme === 'light' ? 'dark' : settings.theme === 'dark' ? 'system' : 'light';
+    storeRef.current.setTheme(next);
   }, [settings.theme]);
 
   /* --------------------------- 窄面板抽屉 --------------------------- */
@@ -360,8 +366,9 @@ export default function App() {
     { id: 'locate', label: '定位当前页面在书签中的位置', run: () => locateBookmark() },
     {
       id: 'theme',
-      label: settings.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题',
-      run: () => storeRef.current.setTheme(settings.theme === 'dark' ? 'light' : 'dark'),
+      label: settings.theme === 'light' ? '切换到深色主题'
+        : settings.theme === 'dark' ? '跟随浏览器主题' : '切换到浅色主题',
+      run: cycleTheme,
     },
     { id: 'groups', label: '管理分组', run: () => setPanel('groups') },
     { id: 'data', label: '数据与整理', run: () => setPanel('data') },
@@ -376,7 +383,7 @@ export default function App() {
       label: '查看当前标签页',
       run: () => { setView('tabs'); setActiveTag(null); setQuery(''); },
     },
-  ], [settings.theme, openAddDialog, locateBookmark, browseTo]);
+  ], [settings.theme, openAddDialog, locateBookmark, browseTo, cycleTheme]);
 
   const handleSwitcherBookmark = useCallback((bm: Bookmark) => {
     storeRef.current.visitBookmark(bm.id, bm.url);
@@ -1137,11 +1144,14 @@ export default function App() {
           </button>
           <button
             className="icon-btn"
-            onClick={() => store.setTheme(settings.theme === 'dark' ? 'light' : 'dark')}
-            title={settings.theme === 'dark' ? '切换到浅色' : '切换到深色'}
+            onClick={cycleTheme}
+            title={settings.theme === 'light' ? '主题：浅色 · 点击切换深色'
+              : settings.theme === 'dark' ? '主题：深色 · 点击跟随浏览器' : '主题：跟随浏览器 · 点击切换浅色'}
             aria-label="切换主题"
           >
-            {settings.theme === 'dark' ? <IconSun size={17} /> : <IconMoon size={17} />}
+            {settings.theme === 'light' ? <IconSun size={17} />
+              : settings.theme === 'dark' ? <IconMoon size={17} />
+                : <IconThemeAuto size={17} />}
           </button>
           <button
             className="icon-btn"

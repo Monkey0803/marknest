@@ -273,6 +273,14 @@ export const IconOpenWindow = ({ size = 18, ...p }: IconProps) => (
   </svg>
 );
 
+/** 跟随浏览器主题：一半填充的圆 */
+export const IconThemeAuto = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none" />
+  </svg>
+);
+
 /** 定位：准星，用于「在当前页面找到对应书签」 */
 export const IconLocate = ({ size = 18, ...p }: IconProps) => (
   <svg {...base(size)} {...p}>
