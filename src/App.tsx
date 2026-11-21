@@ -3,13 +3,13 @@ import { flushSync } from 'react-dom';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useBookmarkStore } from './store/useBookmarkStore';
 import {
-  buildAllSubtrees, buildGroupTree, downloadFile, exportGroupHtml, findDuplicateTags, findDuplicates,
+  buildAllSubtrees, buildGroupTree, downloadFile, exportGroupHtml, findDuplicateTags,
   formatCount, getHost, groupPath, groupSubtreeIds, normalizeUrl, sortBookmarks,
 } from './lib/utils';
 import type { GroupNode } from './lib/utils';
 import {
-  SHORTCUT_ACTIONS, autoTagsFor, hasAdvancedSyntax, matchesCombo, matchesQuery, matchesSmartFolder,
-  parseSearchQuery, stripTrackingParams, type MatchContext,
+  SHORTCUT_ACTIONS, autoTagsFor, findDuplicateGroups, hasAdvancedSyntax, matchesCombo,
+  matchesQuery, matchesSmartFolder, parseSearchQuery, stripTrackingParams, type MatchContext,
 } from './lib/features';
 import { checkLinks } from './lib/health';
 import type { AppState, Bookmark, Group, SortMode } from './types';
@@ -45,6 +45,7 @@ import InsightsDialog from './components/InsightsDialog';
 import BatchEditDialog from './components/BatchEditDialog';
 import SettingsDialog from './components/SettingsDialog';
 import PinDialog from './components/PinDialog';
+import DedupeDialog, { type DedupeOperation } from './components/DedupeDialog';
 
 type Panel = 'bookmarks' | 'groups' | 'data' | 'shortcuts';
 
@@ -123,6 +124,7 @@ export default function App() {
   const [recycleOpen, setRecycleOpen] = useState(false);
   const [smartFoldersOpen, setSmartFoldersOpen] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
+  const [dedupeOpen, setDedupeOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [batchEditOpen, setBatchEditOpen] = useState(false);
   /** 待解锁的私密分组 id */
@@ -543,7 +545,13 @@ export default function App() {
     return Array.from(s).sort((a, b) => a.localeCompare(b, 'zh-CN'));
   }, [bookmarks]);
 
-  const duplicates = useMemo(() => findDuplicates(bookmarks), [bookmarks]);
+  /** 智能去重：按 URL 指纹归组（忽略协议/www/追踪参数/hash 等），每组推荐信息最完整的保留项 */
+  const duplicateGroups = useMemo(() => findDuplicateGroups(allBookmarks), [allBookmarks]);
+  /** DataDialog 兼容用的冗余 id 列表（保留每组推荐项，其余为冗余） */
+  const duplicates = useMemo(
+    () => duplicateGroups.flatMap((g) => g.members.slice(1).map((m) => m.bookmark.id)),
+    [duplicateGroups],
+  );
 
   /** 阅读清单未读数量（侧栏角标） */
   const unreadCount = useMemo(
@@ -696,7 +704,7 @@ export default function App() {
       // 快捷键设置页录制组合键时若冒泡到这里，会误触发快速切换/搜索等动作。
       // Escape 交给弹窗自身；这里只拦截快捷键类事件。
       const anyModalOpen = settingsOpen || recycleOpen || smartFoldersOpen || insightsOpen
-        || batchEditOpen || pinTarget !== null;
+        || dedupeOpen || batchEditOpen || pinTarget !== null;
       if (anyModalOpen && e.key !== 'Escape') return;
       if (hit('command')) {
         e.preventDefault();
@@ -785,7 +793,7 @@ export default function App() {
   }, [panel, query, activeTag, focusedId, selectMode, selectAll, clearSelection, toggleSelect, view,
     openAddDialog, locateBookmark, performUndo, performRedo, switcherOpen,
     createGroupOpen, bookmarkDialog, groupSettingsOpen, pendingDeleteGroupId, tagPanelOpen, bulkTagOpen,
-    settingsOpen, recycleOpen, smartFoldersOpen, insightsOpen, batchEditOpen, pinTarget]);
+    settingsOpen, recycleOpen, smartFoldersOpen, insightsOpen, dedupeOpen, batchEditOpen, pinTarget]);
 
   // 键盘焦点 / 定位命中的卡片滚到列表中央。列表受 useDeferredValue 影响可能晚一帧才刷新，
   // 因此逐帧重试直到卡片出现；直接设置滚动容器位置，不依赖浏览器对 scrollIntoView 的行为差异。
@@ -849,19 +857,30 @@ export default function App() {
   }, [store.conflictBackup, showAction]);
 
   // 死链巡检定时器到点：提示用户执行检测（真正检测在前端进行）
-  const healthDueShown = useRef(false);
+  // 监听 local 变化而非只在挂载时读一次，避免面板常开时 alarm 到点的提示被漏掉。
+  const healthDueShown = useRef(0);
   useEffect(() => {
-    if (healthDueShown.current || !store.ready) return;
-    healthDueShown.current = true;
-    chrome.storage.local.get('mn:health-due').then((obj) => {
-      if (obj['mn:health-due']) {
-        chrome.storage.local.remove('mn:health-due').catch(() => {});
-        showAction('死链巡检时间到了', '立即检测', () => {
-          setFocusHealth(true);
-          setPanel('data');
-        });
-      }
-    }).catch(() => {});
+    if (!store.ready) return;
+    let alive = true;
+    const dueAt = (value: unknown) => Number(value) || 0;
+    const fireIfDue = (value: unknown) => {
+      const ts = dueAt(value);
+      if (!alive || !ts || ts <= healthDueShown.current) return;
+      healthDueShown.current = ts;
+      chrome.storage.local.remove('mn:health-due').catch(() => {});
+      showAction('死链巡检时间到了', '立即检测', () => {
+        setFocusHealth(true);
+        setPanel('data');
+      });
+    };
+    // 挂载时补读一次（覆盖面板关闭期间 alarm 已写入的情况）
+    chrome.storage.local.get('mn:health-due').then((obj) => fireIfDue(obj['mn:health-due'])).catch(() => {});
+    // storage.local.onChanged 只回传 changes（area 恒为 local，无需判断）
+    const onChange = (changes: { [key: string]: chrome.storage.StorageChange }) => {
+      if (changes['mn:health-due']) fireIfDue(changes['mn:health-due'].newValue);
+    };
+    chrome.storage.local.onChanged.addListener(onChange);
+    return () => { alive = false; chrome.storage.local.onChanged.removeListener(onChange); };
   }, [store.ready, showAction]);
 
   /* -------------------------- 操作 -------------------------- */
@@ -1052,6 +1071,33 @@ export default function App() {
     showUndo(`已重命名 ${selectedIds.size} 个书签`);
   };
 
+  /* ------------------------ 智能去重 ------------------------ */
+  /**
+   * 一次性提交所有合并操作：保留项吸收元数据（标签并集/备注/访问数/置顶），
+   * 冗余项软删进回收站。单次 importData 保证撤销栈只有一步、多端同步一次完成。
+   */
+  const handleApplyDedupe = (operations: DedupeOperation[]) => {
+    if (!operations.length) return;
+    const keepPatches = new Map<string, Partial<Bookmark>>();
+    const removeIds = new Set<string>();
+    let removed = 0;
+    for (const op of operations) {
+      keepPatches.set(op.keepId, op.patch);
+      op.removeIds.forEach((id) => removeIds.add(id));
+      removed += op.removeIds.length;
+    }
+    pushUndo(`智能去重（合并 ${removed} 条，${operations.length} 组）`);
+    store.importData({
+      ...storeRef.current.state,
+      bookmarks: storeRef.current.state.bookmarks.map((b) => {
+        if (keepPatches.has(b.id)) return { ...b, ...keepPatches.get(b.id)! };
+        if (removeIds.has(b.id)) return { ...b, deletedAt: b.deletedAt ?? Date.now(), updatedAt: Date.now() };
+        return b;
+      }),
+    });
+    showUndo(`已合并 ${removed} 条重复书签（${operations.length} 组），可撤销或从回收站还原`);
+  };
+
   /* ------------------------ 智能文件夹 / 设置 / 洞察 ------------------------ */
   const handleSaveSmartFolders = (folders: typeof settings.smartFolders) => {
     pushUndo('修改智能文件夹');
@@ -1230,6 +1276,21 @@ export default function App() {
         fail(err);
       }
     });
+
+  /** 供设置页配置文件夹映射：提取浏览器书签树里的文件夹节点（无 url 即文件夹） */
+  const loadBrowserFolders = useCallback(async (): Promise<{ id: string; title: string }[]> => {
+    const tree = await readBrowserBookmarks();
+    const out: { id: string; title: string }[] = [];
+    const walk = (nodes: chrome.bookmarks.BookmarkTreeNode[], depth: number) => {
+      for (const node of nodes) {
+        if (node.url) continue;
+        out.push({ id: node.id, title: `${'　'.repeat(Math.min(depth, 6))}${node.title || '未命名文件夹'}` });
+        if (node.children) walk(node.children, depth + 1);
+      }
+    };
+    walk(tree, 0);
+    return out;
+  }, []);
 
   /**
    * 从 Chrome 导入：把书签文件夹树映射为分组树（支持嵌套），网址去重。
@@ -2215,6 +2276,8 @@ export default function App() {
         open={panel === 'data'}
         state={store.state}
         duplicates={duplicates}
+        duplicateGroupCount={duplicateGroups.length}
+        onOpenDedupe={() => { setPanel(null); setDedupeOpen(true); }}
         focusHealth={focusHealth}
         onClose={() => { setPanel(null); setFocusHealth(false); }}
         onHealthResult={(deadIds) => {
@@ -2229,15 +2292,6 @@ export default function App() {
           pushUndo(`导入 HTML（新增 ${items.length} 条）`);
           store.importData({ ...store.state, bookmarks: [...store.state.bookmarks, ...items] });
           showToast(`已导入 ${items.length} 个书签，可撤销`);
-        }}
-        onRemoveDuplicates={(ids) => {
-          pushUndo(`清理 ${ids.length} 个重复书签`);
-          const idSet = new Set(ids);
-          store.importData({
-            ...store.state,
-            bookmarks: store.state.bookmarks.filter((b) => !idSet.has(b.id)),
-          });
-          showUndo(`已清理 ${ids.length} 个重复书签`);
         }}
         onImportBrowser={handleImportBrowser}
         onDeleteBookmarks={(ids) => {
@@ -2337,6 +2391,13 @@ export default function App() {
         onSave={handleSaveSmartFolders}
       />
       <InsightsDialog open={insightsOpen} bookmarks={allBookmarks} onClose={() => setInsightsOpen(false)} />
+      <DedupeDialog
+        open={dedupeOpen}
+        bookmarks={allBookmarks}
+        groups={allGroups}
+        onClose={() => setDedupeOpen(false)}
+        onApply={handleApplyDedupe}
+      />
       <BatchEditDialog
         open={batchEditOpen}
         count={selectedIds.size}
@@ -2348,6 +2409,7 @@ export default function App() {
       <SettingsDialog
         open={settingsOpen}
         settings={settings}
+        groups={allGroups}
         archivedCount={archivedCount}
         onClose={() => setSettingsOpen(false)}
         onPatch={handleSettingsPatch}
@@ -2355,6 +2417,7 @@ export default function App() {
         onUnarchiveAll={handleUnarchiveAll}
         onRunHealthCheck={handleRunHealthCheck}
         onSetPin={handleSetPin}
+        onLoadBrowserFolders={loadBrowserFolders}
       />
       <PinDialog
         open={pinTarget !== null}

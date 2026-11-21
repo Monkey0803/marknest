@@ -602,10 +602,5 @@ export function onExternalChange(callback: (remoteUpdatedAt: number, pendingAdd:
   return () => chrome.storage.onChanged.removeListener(handler);
 }
 
-/** 右键菜单收藏入队（service worker 调用）：写入 URL/title/favicon，由前端消费 */
+/** 右键菜单收藏队列项（由 service worker 直接写入 PENDING_ADD_KEY，前端消费） */
 export interface PendingAdd { url: string; title: string; favicon?: string; createdAt: number }
-export async function enqueuePendingAdd(item: PendingAdd): Promise<void> {
-  const obj = await chrome.storage.sync.get(PENDING_ADD_KEY);
-  const list = (obj[PENDING_ADD_KEY] as PendingAdd[] | undefined) ?? [];
-  await chrome.storage.sync.set({ [PENDING_ADD_KEY]: [...list, item].slice(-50) });
-}

@@ -223,6 +223,122 @@ export function autoTagsFor(rules: AutoTagRule[], bm: Pick<Bookmark, 'tags' | 'u
   return add;
 }
 
+/* ------------------------------ 智能去重 ------------------------------ */
+
+/** 重复组中的一条成员及其「适合保留」评分依据 */
+export interface DuplicateMember {
+  bookmark: Bookmark;
+  /** 信息完整度评分，越高越适合作为保留项 */
+  score: number;
+  /** 得分理由，供界面展示（如「有备注」「3 个标签」） */
+  reasons: string[];
+}
+
+/** 一组 URL 指纹相同、可合并的书签 */
+export interface DuplicateGroup {
+  /** 稳定标识：URL 指纹 */
+  key: string;
+  /** 推荐展示的代表网址（评分最高成员的原始网址） */
+  url: string;
+  host: string;
+  /** 按评分降序排列，首项即推荐保留项 */
+  members: DuplicateMember[];
+  recommendedId: string;
+  /** 可清理的冗余条数 = 成员数 - 1 */
+  removableCount: number;
+}
+
+/**
+ * 评估一条书签作为「保留项」的信息完整度。
+ * 评分维度：备注 > 标签 > 访问 > 分组 > 置顶 > 阅读清单 > 图标 > 来源；
+ * 同等分数下创建更早者胜出，避免结果随数组顺序漂移。
+ */
+export function scoreBookmarkForKeep(bm: Bookmark): { score: number; reasons: string[] } {
+  let score = 0;
+  const reasons: string[] = [];
+  if (bm.description?.trim()) { score += 4; reasons.push('有备注'); }
+  const tagCount = bm.tags.filter((t) => t.trim()).length;
+  if (tagCount) { score += Math.min(tagCount, 3) * 2; reasons.push(`${tagCount} 个标签`); }
+  if (bm.visits > 0) { score += Math.min(bm.visits, 10); reasons.push(`访问 ${bm.visits} 次`); }
+  if (bm.groupId) { score += 3; reasons.push('已分组'); }
+  if (bm.pinned) { score += 2; reasons.push('已置顶'); }
+  if (bm.readLater) { score += 1; reasons.push('在阅读清单'); }
+  if (bm.favicon) { score += 1; reasons.push('有站点图标'); }
+  if (bm.browserId) { score += 1; reasons.push('来自浏览器同步'); }
+  if (bm.createdAt > 0) { score += 1; reasons.push('创建较早'); }
+  return { score, reasons };
+}
+
+/**
+ * 按 URL 指纹把书签归为重复组。
+ * 指纹忽略协议、www、尾斜杠、追踪参数、hash 与 query 顺序，
+ * 因此 `?utm_source=x`、`http://www.x.com/a/` 与干净网址会被识别为同一条。
+ * 回收站与浏览器内部协议不参与处理。
+ */
+export function findDuplicateGroups(items: Bookmark[]): DuplicateGroup[] {
+  const active = items.filter((b) => !b.deletedAt && /^https?:\/\//i.test(b.url));
+  const buckets = new Map<string, Bookmark[]>();
+  for (const bm of active) {
+    const key = urlFingerprint(bm.url);
+    if (!key) continue;
+    const arr = buckets.get(key) ?? [];
+    arr.push(bm);
+    buckets.set(key, arr);
+  }
+  const out: DuplicateGroup[] = [];
+  for (const [key, arr] of buckets) {
+    if (arr.length < 2) continue;
+    const members = arr.map((bookmark) => {
+      const { score, reasons } = scoreBookmarkForKeep(bookmark);
+      return { bookmark, score, reasons };
+    }).sort((a, b) => b.score - a.score
+      || a.bookmark.createdAt - b.bookmark.createdAt
+      || a.bookmark.id.localeCompare(b.bookmark.id));
+    out.push({
+      key,
+      url: members[0].bookmark.url,
+      host: getHost(members[0].bookmark.url),
+      members,
+      recommendedId: members[0].bookmark.id,
+      removableCount: arr.length - 1,
+    });
+  }
+  return out.sort((a, b) => b.removableCount - a.removableCount
+    || b.members.length - a.members.length
+    || a.host.localeCompare(b.host));
+}
+
+/**
+ * 计算把被移除书签合并进保留项后的元数据补丁。
+ * 标签取并集（规范化去重，写法保留首次出现者）；备注取保留项，空缺时取最长的非空备注；
+ * 访问数/最近访问取最大值；置顶与阅读清单按「任一为真则真」合并。
+ */
+export function mergedKeepPatch(keep: Bookmark, removed: Bookmark[]): Partial<Bookmark> {
+  const tagMap = new Map<string, string>();
+  for (const bm of [keep, ...removed]) {
+    for (const tag of bm.tags) {
+      const k = tag.normalize('NFKC').toLowerCase().replace(/\s+/g, '');
+      if (k && !tagMap.has(k)) tagMap.set(k, tag);
+    }
+  }
+  let description = keep.description ?? '';
+  if (!description.trim()) {
+    description = removed
+      .map((b) => b.description ?? '')
+      .filter((d) => d.trim())
+      .sort((a, b) => b.length - a.length)[0] ?? '';
+  }
+  return {
+    tags: [...tagMap.values()],
+    description,
+    visits: Math.max(keep.visits, ...removed.map((b) => b.visits)),
+    visitedAt: Math.max(keep.visitedAt, ...removed.map((b) => b.visitedAt)),
+    pinned: keep.pinned || removed.some((b) => b.pinned),
+    readLater: Boolean(keep.readLater || removed.some((b) => b.readLater)),
+    updatedAt: Date.now(),
+  };
+}
+
 /* ------------------------------ 数据洞察 ------------------------------ */
 
 export interface DomainStat { domain: string; count: number; visits: number; }

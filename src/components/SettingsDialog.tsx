@@ -1,7 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type {
-  ArchiveConfig, AutoTagRule, BrowserSyncState, HealthMonitor, Settings,
+  ArchiveConfig, AutoTagRule, BrowserSyncState, Group, HealthMonitor, Settings,
 } from '../types';
 import { SHORTCUT_ACTIONS, hashPin, keyComboFromEvent } from '../lib/features';
 import { useModalFocus } from '../lib/useModalFocus';
@@ -16,6 +16,7 @@ type Tab = 'general' | 'autotag' | 'browsersync' | 'health' | 'archive' | 'short
 interface Props {
   open: boolean;
   settings: Settings;
+  groups: Group[];
   archivedCount: number;
   onClose: () => void;
   onPatch: (patch: Partial<Settings>) => void;
@@ -23,11 +24,13 @@ interface Props {
   onUnarchiveAll: () => void;
   onRunHealthCheck: () => void;
   onSetPin: (hash: string | undefined) => void;
+  /** 读取浏览器书签文件夹树，返回 [{ id, title }]，用于配置文件夹映射 */
+  onLoadBrowserFolders: () => Promise<{ id: string; title: string }[]>;
 }
 
 export default function SettingsDialog({
-  open, settings, archivedCount, onClose, onPatch,
-  onRunArchive, onUnarchiveAll, onRunHealthCheck, onSetPin,
+  open, settings, groups, archivedCount, onClose, onPatch,
+  onRunArchive, onUnarchiveAll, onRunHealthCheck, onSetPin, onLoadBrowserFolders,
 }: Props) {
   const modalRef = useRef<HTMLDivElement>(null);
   useModalFocus(open, modalRef, onClose);
@@ -35,6 +38,18 @@ export default function SettingsDialog({
   const [newRule, setNewRule] = useState<{ kind: 'domain' | 'keyword'; pattern: string; tags: string }>({ kind: 'domain', pattern: '', tags: '' });
   const [pinInput, setPinInput] = useState('');
   const [recording, setRecording] = useState<string | null>(null);
+  const [browserFolders, setBrowserFolders] = useState<{ id: string; title: string }[]>([]);
+  const [folderLoadError, setFolderLoadError] = useState('');
+
+  // 打开设置时按需加载浏览器文件夹，供映射配置使用；失败只在本区提示，不影响其它设置
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    onLoadBrowserFolders()
+      .then((list) => { if (alive) { setBrowserFolders(list); setFolderLoadError(''); } })
+      .catch(() => { if (alive) setFolderLoadError('无法读取浏览器书签，请确认已授予「书签」权限'); });
+    return () => { alive = false; };
+  }, [open, onLoadBrowserFolders]);
 
   if (!open) return null;
 
@@ -133,6 +148,52 @@ export default function SettingsDialog({
                   <span><strong>删除同步到回收站</strong><small>浏览器里删掉的书签进入回收站（可还原），而非直接消失</small></span>
                   <input type="checkbox" checked={settings.browserSync.syncRemovals} onChange={(e) => patchBrowserSync({ syncRemovals: e.target.checked })} />
                 </label>
+
+                <div className="folder-map">
+                  <h4>文件夹映射</h4>
+                  <p className="hint">把浏览器文件夹绑定到指定分组，增量同步时书签会进入对应分组。全量导入会自动建立映射，这里可手动调整。</p>
+                  {folderLoadError && <p className="hint hint--error">{folderLoadError}</p>}
+                  {groups.length === 0 && <p className="hint">还没有分组，请先到主界面新建一个分组。</p>}
+                  {Object.entries(settings.browserSync.folderMap).map(([browserId, groupId]) => (
+                    <div className="folder-map__row" key={browserId}>
+                      <span className="folder-map__name" title={browserId}>
+                        {browserFolders.find((f) => f.id === browserId)?.title || `文件夹 ${browserId}`}
+                      </span>
+                      <span className="folder-map__arrow">→</span>
+                      <select
+                        value={groupId}
+                        onChange={(e) => {
+                          const next = { ...settings.browserSync.folderMap };
+                          if (e.target.value) next[browserId] = e.target.value;
+                          else delete next[browserId];
+                          patchBrowserSync({ folderMap: next });
+                        }}
+                      >
+                        <option value="">不映射</option>
+                        {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                      </select>
+                    </div>
+                  ))}
+                  {browserFolders
+                    .filter((f) => !settings.browserSync.folderMap[f.id])
+                    .map((f) => (
+                      <div className="folder-map__row" key={f.id}>
+                        <span className="folder-map__name" title={f.id}>{f.title}</span>
+                        <span className="folder-map__arrow">→</span>
+                        <select
+                          value=""
+                          disabled={groups.length === 0}
+                          onChange={(e) => {
+                            if (!e.target.value) return;
+                            patchBrowserSync({ folderMap: { ...settings.browserSync.folderMap, [f.id]: e.target.value } });
+                          }}
+                        >
+                          <option value="">新增映射…</option>
+                          {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                </div>
                 <p className="hint hint--foot">
                   {settings.browserSync.lastSyncedAt
                     ? `上次合并：${new Date(settings.browserSync.lastSyncedAt).toLocaleString('zh-CN')}`
@@ -162,9 +223,9 @@ export default function SettingsDialog({
             {tab === 'archive' && (
               <>
                 <h3>分层存储</h3>
-                <p className="hint">把长期未访问的冷书签标记为归档，便于整理；归档书签仍可在全部书签里浏览（卡片带「归档」标记），随时一键取回。为跨设备一致，归档书签同样占用 sync 配额，本机 local 另存一份副本兜底。</p>
+                <p className="hint">把长期未访问的冷书签标记为归档，便于整理；归档书签仍可在全部书签里浏览（卡片带「归档」标记），随时一键取回。为跨设备一致，归档书签同样占用 sync 配额，本机 local 另存一份副本兜底。归档为手动操作，点击下方按钮按阈值执行。</p>
                 <label className="field">
-                  <span>自动归档：超过多少天未访问（0 = 关闭自动归档）</span>
+                  <span>冷书签阈值：超过多少天未访问（供手动归档使用，0 = 关闭按钮）</span>
                   <input type="number" min={0} value={settings.archive.idleDays} onChange={(e) => patchArchive({ idleDays: Math.max(0, Number(e.target.value) || 0) })} />
                 </label>
                 <div className="archive-actions">

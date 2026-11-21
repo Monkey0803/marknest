@@ -5,7 +5,7 @@ import { downloadFile } from '../lib/utils';
 import { getDiagnostic, type SyncDiagnostic } from '../lib/storage';
 import { useModalFocus } from '../lib/useModalFocus';
 import { checkLinks, healthStats, type LinkCheckResult } from '../lib/health';
-import { IconClose, IconDownload, IconUpload, IconSparkle, IconTrash, IconCloudCheck, IconCheck, IconFolderPlus } from './Icons';
+import { IconClose, IconDownload, IconUpload, IconSparkle, IconTrash, IconCloudCheck, IconCheck, IconFolderPlus, IconMerge } from './Icons';
 
 /** 预设分组模板：一键套用常用分组结构（已存在的同名分组会跳过） */
 const TEMPLATES: { id: string; name: string; groups: string[] }[] = [
@@ -24,11 +24,15 @@ function readLastExportAt(): number {
 interface Props {
   open: boolean;
   state: AppState;
+  /** 重复书签的冗余条数 */
   duplicates: string[];
+  /** 重复组数 */
+  duplicateGroupCount: number;
   onClose: () => void;
   onImportJson: (data: AppState) => void;
   onImportHtml: (bookmarks: Bookmark[]) => void;
-  onRemoveDuplicates: (ids: string[]) => void;
+  /** 打开逐组审阅式智能去重对话框 */
+  onOpenDedupe: () => void;
   onImportBrowser: () => Promise<{ imported: number; skipped: number; unsupported?: number; groups?: number }>;
   /** 健康检查里按 id 删除书签（由调用方带撤销提示） */
   onDeleteBookmarks: (ids: string[]) => void;
@@ -41,8 +45,8 @@ interface Props {
 }
 
 export default function DataDialog({
-  open, state, duplicates, onClose, onImportJson, onImportHtml,
-  onRemoveDuplicates, onImportBrowser, onDeleteBookmarks, onApplyTemplate,
+  open, state, duplicates, duplicateGroupCount, onClose, onImportJson, onImportHtml,
+  onOpenDedupe, onImportBrowser, onDeleteBookmarks, onApplyTemplate,
   focusHealth, onHealthResult,
 }: Props) {
   const [message, setMessage] = useState('');
@@ -447,17 +451,14 @@ export default function DataDialog({
           </section>
 
           <section className="data-section">
-            <h3 className="data-section__title">重复检测</h3>
+            <h3 className="data-section__title">智能去重</h3>
             {duplicates.length === 0 ? (
               <p className="hint"><IconSparkle size={13} /> 没有发现重复书签，很整洁。</p>
             ) : (
               <div className="dup-box">
-                <p>发现 {duplicates.length} 个重复书签（保留最早添加的一条）。</p>
-                <button
-                  className="btn btn--danger btn--sm"
-                  onClick={() => onRemoveDuplicates(duplicates)}
-                >
-                  <IconTrash size={14} /> 清理重复项
+                <p>发现 {duplicateGroupCount} 组重复，共 {duplicates.length} 条冗余。可按网址指纹识别追踪参数、协议与尾斜杠差异，逐组选择保留项并合并标签与备注。</p>
+                <button className="btn btn--primary btn--sm" onClick={onOpenDedupe}>
+                  <IconMerge size={14} /> 打开智能去重
                 </button>
               </div>
             )}

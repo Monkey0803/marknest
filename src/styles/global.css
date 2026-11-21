@@ -761,6 +761,7 @@ button { cursor: pointer; }
 .group-row .input--inline { flex: 1; min-width: 0; }
 .hint { margin: 0; font-size: 10.5px; color: var(--muted); line-height: 1.55; display: flex; align-items: center; gap: 5px; }
 .hint--foot { padding-top: 6px; border-top: 1px solid var(--line); }
+.hint--error { color: var(--danger); }
 
 /* Data dialog */
 .notice {
@@ -1592,6 +1593,12 @@ body.is-resizing { cursor: col-resize; user-select: none; }
 .rule-tags { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
 .rule-tags em { padding: 1px 7px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); font-size: 11px; font-style: normal; }
 .archive-actions { display: flex; gap: 8px; margin: 14px 0; flex-wrap: wrap; }
+.folder-map { margin: 8px 0; display: flex; flex-direction: column; gap: 6px; }
+.folder-map h4 { margin: 6px 0 0; font-size: 12px; font-weight: 600; color: var(--ink); }
+.folder-map__row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: 11.5px; }
+.folder-map__name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+.folder-map__arrow { color: var(--muted); flex-shrink: 0; }
+.folder-map__row select { flex: 0 0 42%; max-width: 160px; padding: 4px 6px; font-size: 11px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink); cursor: pointer; }
 .shortcut-editor { margin-top: 10px; }
 .shortcut-edit-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .keycap { min-width: 100px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2); color: var(--ink); font: 11px var(--font-mono); cursor: pointer; }
@@ -1621,4 +1628,100 @@ body.is-resizing { cursor: col-resize; user-select: none; }
   font-size: 9px; padding: 1px 5px; border-radius: 8px;
   background: var(--surface-2); color: var(--muted);
   border: 1px solid var(--line);
+}
+
+/* ============================================================
+   智能去重对话框
+   ============================================================ */
+.dedupe-modal { width: min(760px, 94vw); max-height: 88vh; }
+.dedupe-body { gap: 12px; }
+
+.dedupe-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 16px; color: var(--success); text-align: center;
+}
+.dedupe-empty strong { font-family: var(--font-display); font-size: 16px; color: var(--ink); }
+.dedupe-empty span { font-size: 12px; color: var(--muted); }
+
+.dedupe-summary {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 10px 12px; border-radius: var(--r-sm);
+  background: var(--accent-soft); border-left: 2px solid var(--accent);
+  font-size: 11.5px; line-height: 1.6; color: var(--ink-2);
+}
+.dedupe-summary svg { flex: none; margin-top: 2px; color: var(--accent); }
+.dedupe-summary b { color: var(--ink); }
+
+.dedupe-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.dedupe-progress { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.dedupe-group {
+  border: 1px solid var(--line); border-radius: var(--r);
+  background: var(--surface); overflow: hidden;
+}
+.dedupe-group.is-done { opacity: 0.55; }
+.dedupe-group__head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.dedupe-group__title { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.dedupe-group__index {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  background: var(--accent); color: var(--paper);
+  font-size: 11px; font-weight: 600; line-height: 22px; text-align: center;
+}
+.dedupe-group__title > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dedupe-group__title strong {
+  font-size: 12.5px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dedupe-group__title span { font-size: 10.5px; color: var(--muted); }
+.dedupe-done {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--success); font-weight: 600;
+}
+
+.dedupe-members { padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.dedupe-member {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 10px; border-radius: var(--r-sm);
+  border: 1px solid transparent; cursor: pointer;
+  transition: background 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.dedupe-member:hover { background: var(--surface-2); }
+.dedupe-member.is-keep { border-color: var(--accent); background: var(--accent-soft); }
+.dedupe-member input[type="radio"] { margin: 3px 0 0; accent-color: var(--accent); flex: none; }
+.dedupe-member__main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; }
+.dedupe-member__line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dedupe-member__line strong {
+  font-size: 12px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dedupe-member__url {
+  font-size: 10.5px; color: var(--muted); font-family: var(--font-mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dedupe-member__meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 10px; color: var(--ink-2); }
+.dedupe-member__reasons { font-size: 10px; color: var(--success); }
+.dedupe-badge {
+  flex: none; padding: 1px 6px; border-radius: 8px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 9px; font-weight: 600; border: 1px solid var(--line);
+}
+.dedupe-badge--keep { background: var(--accent); color: var(--paper); border-color: var(--accent); }
+
+.dedupe-merge-preview {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+  padding: 7px 12px; border-top: 1px dashed var(--line);
+  font-size: 10.5px; color: var(--ink-2);
+}
+.dedupe-merge-preview svg { color: var(--accent); }
+.dedupe-foot-note { margin-right: auto; font-size: 10px; color: var(--muted); }
+
+@media (max-width: 470px) {
+  .dedupe-group__head { flex-direction: column; align-items: stretch; }
+  .dedupe-foot-note { display: none; }
 }
