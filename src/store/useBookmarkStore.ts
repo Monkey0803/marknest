@@ -783,6 +783,24 @@ export function useBookmarkStore() {
     [commit],
   );
 
+  /**
+   * 设置/清除 PIN。清除时必须原子地抹掉所有分组的 private 标记，
+   * 否则分组仍被判定为锁定，而 pinHash 已不存在 → verifyPin 恒失败 → 书签永久打不开。
+   * 修改 PIN（非清除）时只更新哈希，解锁会话由调用方清空。
+   */
+  const setPin = useCallback(
+    (hash: string | undefined) => {
+      commit((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, pinHash: hash },
+        groups: hash === undefined
+          ? prev.groups.map((g) => (g.private ? { ...g, private: false } : g))
+          : prev.groups,
+      }));
+    },
+    [commit],
+  );
+
   const setTheme = useCallback(
     (theme: ThemeMode) => setSetting('theme', theme),
     [setSetting],
@@ -838,6 +856,7 @@ export function useBookmarkStore() {
     setView,
     setSort,
     setSetting,
+    setPin,
     importData,
     archiveColdBookmarks,
     unarchiveAll,

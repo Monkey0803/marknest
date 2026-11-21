@@ -63,6 +63,8 @@ export default function App() {
   const [view, setView] = useState<'bookmarks' | 'tabs'>('bookmarks');
   const [tabCount, setTabCount] = useState(0);
   const [panel, setPanel] = useState<Panel | null>(null);
+  /** 数据面板打开后是否自动聚焦「书签健康」并检测（死链角标/巡检入口） */
+  const [focusHealth, setFocusHealth] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   /** 新建分组时挂到哪个父分组下（null = 顶层） */
   const [createParentId, setCreateParentId] = useState<string | null>(null);
@@ -134,12 +136,14 @@ export default function App() {
   /** 私密分组保护：未解锁的私密分组（及其子树）id 集合，用于隐藏其书签 */
   const lockedGroupIds = useMemo(() => {
     const set = new Set<string>();
+    // 未设置 PIN 时不存在可校验的锁，任何残留 private 标记都不应锁定书签
+    if (!settings.pinHash) return set;
     for (const g of allGroups) {
       if (!g.private || unlockedGroups.has(g.id)) continue;
       groupSubtreeIds(allGroups, g.id).forEach((id) => set.add(id));
     }
     return set;
-  }, [allGroups, unlockedGroups]);
+  }, [allGroups, unlockedGroups, settings.pinHash]);
   const groups = allGroups;
   /** 始终指向最新 store，供事件监听/延时回调使用（避免闭包过期和监听器频繁重绑） */
   const storeRef = useRef(store);
@@ -571,7 +575,7 @@ export default function App() {
   }, [settings.smartFolders, bookmarks, groupPathText, lockedGroupIds]);
 
   /** 死链角标数量 */
-  const deadLinkCount = settings.healthMonitor.deadIds.filter((id) => allBookmarks.some((b) => b.id === id)).length;
+  const deadLinkCount = settings.healthMonitor.deadIds.filter((id) => bookmarks.some((b) => b.id === id)).length;
 
   /** 键盘监听用 ref 读取最新列表，避免每次筛选变化都重绑 window 监听 */
   const filteredRef = useRef<Bookmark[]>([]);
@@ -846,7 +850,8 @@ export default function App() {
       if (obj['mn:health-due']) {
         chrome.storage.local.remove('mn:health-due').catch(() => {});
         showAction('死链巡检时间到了', '立即检测', () => {
-          setSettingsOpen(true);
+          setFocusHealth(true);
+          setPanel('data');
         });
       }
     }).catch(() => {});
@@ -1054,7 +1059,7 @@ export default function App() {
   };
   const handleRunArchive = (days: number) => {
     const n = store.archiveColdBookmarks(days);
-    showToast(n ? `已归档 ${n} 个冷书签到本地（不占同步配额）` : '没有符合条件的冷书签');
+    showToast(n ? `已归档 ${n} 个冷书签（local 留副本，跨设备仍可见）` : '没有符合条件的冷书签');
   };
   const handleUnarchiveAll = () => {
     const n = store.unarchiveAll();
@@ -1071,8 +1076,10 @@ export default function App() {
   };
   const handleSetPin = (hash: string | undefined) => {
     pushUndo('修改 PIN');
-    store.setSetting('pinHash', hash);
-    if (!hash) setUnlockedGroups(new Set());
+    // 原子更新：清除 PIN 时由 store 一并抹掉分组的 private 标记，避免分组仍被锁定却无法校验
+    store.setPin(hash);
+    // 只要 PIN 发生变更（设置/修改/清除），已解锁会话一律失效
+    setUnlockedGroups(new Set());
     showUndo(hash ? 'PIN 已设置' : 'PIN 已取消');
   };
 
@@ -1393,7 +1400,7 @@ export default function App() {
           {deadLinkCount > 0 && (
             <button
               className="icon-btn topbar__alert"
-              onClick={() => setInsightsOpen(true)}
+              onClick={() => { setFocusHealth(true); setPanel('data'); }}
               title={`检测到 ${deadLinkCount} 个死链`}
               aria-label={`检测到 ${deadLinkCount} 个死链`}
             >
@@ -2192,7 +2199,11 @@ export default function App() {
         open={panel === 'data'}
         state={store.state}
         duplicates={duplicates}
-        onClose={() => setPanel(null)}
+        focusHealth={focusHealth}
+        onClose={() => { setPanel(null); setFocusHealth(false); }}
+        onHealthResult={(deadIds) => {
+          store.setSetting('healthMonitor', { ...settings.healthMonitor, lastRunAt: Date.now(), deadIds });
+        }}
         onImportJson={(data: AppState) => {
           pushUndo('导入 JSON（覆盖）');
           store.importData(data);

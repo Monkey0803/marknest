@@ -54,10 +54,17 @@ async function pushBmEvent(evt) {
   try {
     const obj = await chrome.storage.local.get(BM_EVENTS_KEY);
     const list = Array.isArray(obj[BM_EVENTS_KEY]) ? obj[BM_EVENTS_KEY] : [];
-    // 同一节点短时间内的连续事件只保留最新一条，避免队列膨胀
-    const filtered = list.filter((e) => !(e.nodeId === evt.nodeId && evt.type !== 'created'));
-    filtered.push(evt);
-    await chrome.storage.local.set({ [BM_EVENTS_KEY]: filtered.slice(-MAX_EVENTS) });
+    // 同节点的「同类」事件按字段合并：既抑制队列膨胀，又保证 created 基础事件
+    // 不会被随后的 changed/moved 挤掉。旧实现判断的是入站 evt.type，来一个 changed
+    // 就把已入队的 created 一并删除，前端按 browserId 找不到书签 → 新增后改名/移动即丢失。
+    let merged = false;
+    const next = list.map((e) => {
+      if (e.nodeId !== evt.nodeId || e.type !== evt.type) return e;
+      merged = true;
+      return { ...e, ...evt };
+    });
+    if (!merged) next.push(evt);
+    await chrome.storage.local.set({ [BM_EVENTS_KEY]: next.slice(-MAX_EVENTS) });
   } catch (err) {
     console.warn('enqueue browser bookmark event failed', err);
   }

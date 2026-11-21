@@ -98,7 +98,7 @@ export default function GroupSettingsDialog({
           />
           <label className="toggle-row toggle-row--compact">
             <span><strong><IconLock size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />私密分组</strong><small>{hasPin ? '开启后需输入 PIN 才能查看本分组的书签' : '请先在「设置 → 私密」里设置 PIN'}</small></span>
-            <input type="checkbox" checked={isPrivate} disabled={!hasPin} onChange={(e) => setIsPrivate(e.target.checked)} />
+            <input type="checkbox" checked={isPrivate} disabled={!hasPin && !isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
           </label>
           <div className="group-settings__actions">
             <button className="btn btn--ghost btn--sm" onClick={() => { onCreateSub(group.id); onClose(); }}>

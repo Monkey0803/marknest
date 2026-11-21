@@ -162,7 +162,7 @@ export default function SettingsDialog({
             {tab === 'archive' && (
               <>
                 <h3>分层存储</h3>
-                <p className="hint">chrome.storage.sync 只有 100 KB。把长期未访问的冷书签下沉到 chrome.storage.local（约 10 MB），可突破容量上限。归档书签仍可在全部书签里浏览。</p>
+                <p className="hint">把长期未访问的冷书签标记为归档，便于整理；归档书签仍可在全部书签里浏览（卡片带「归档」标记），随时一键取回。为跨设备一致，归档书签同样占用 sync 配额，本机 local 另存一份副本兜底。</p>
                 <label className="field">
                   <span>自动归档：超过多少天未访问（0 = 关闭自动归档）</span>
                   <input type="number" min={0} value={settings.archive.idleDays} onChange={(e) => patchArchive({ idleDays: Math.max(0, Number(e.target.value) || 0) })} />

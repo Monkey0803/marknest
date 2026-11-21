@@ -34,11 +34,16 @@ interface Props {
   onDeleteBookmarks: (ids: string[]) => void;
   /** 套用分组模板：新建缺失的分组，由调用方返回实际创建数 */
   onApplyTemplate: (names: string[]) => number;
+  /** 打开后自动滚动到「书签健康」区并触发一次检测（死链角标/巡检提醒入口） */
+  focusHealth?: boolean;
+  /** 检测结果回写全局 deadIds，供顶栏角标统一消费 */
+  onHealthResult?: (deadIds: string[]) => void;
 }
 
 export default function DataDialog({
   open, state, duplicates, onClose, onImportJson, onImportHtml,
   onRemoveDuplicates, onImportBrowser, onDeleteBookmarks, onApplyTemplate,
+  focusHealth, onHealthResult,
 }: Props) {
   const [message, setMessage] = useState('');
   const [permIssue, setPermIssue] = useState<'permission' | 'unknown' | null>(null);
@@ -50,6 +55,9 @@ export default function DataDialog({
   const [deadLinks, setDeadLinks] = useState<LinkCheckResult[]>([]);
   const [healthNote, setHealthNote] = useState('');
   const modalRef = useRef<HTMLDivElement>(null);
+  const healthSectionRef = useRef<HTMLElement>(null);
+  const autoCheckedRef = useRef(false);
+  const doHealthCheckRef = useRef<() => void>(() => {});
   useModalFocus(open, modalRef, onClose);
 
   useEffect(() => {
@@ -60,6 +68,20 @@ export default function DataDialog({
       .catch(() => { if (alive) setDiag(null); });
     return () => { alive = false; };
   }, [open]);
+
+  // 从死链角标/巡检提醒进入时，滚动到健康区并自动跑一次检测（每次打开只触发一次）
+  useEffect(() => {
+    if (!open || !focusHealth) return;
+    autoCheckedRef.current = false;
+    const raf = requestAnimationFrame(() => {
+      healthSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      if (!autoCheckedRef.current) {
+        autoCheckedRef.current = true;
+        doHealthCheckRef.current();
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open, focusHealth]);
 
   if (!open) return null;
 
@@ -155,9 +177,13 @@ export default function DataDialog({
     setHealthNote('');
     setChecking({ done: 0, total: 0 });
     try {
-      const results = await checkLinks(state.bookmarks, (done, total) => setChecking({ done, total }));
+      // 与顶栏角标口径一致：排除回收站软删项，只检测在用的书签
+      const targets = state.bookmarks.filter((b) => !b.deletedAt);
+      const results = await checkLinks(targets, (done, total) => setChecking({ done, total }));
       const dead = results.filter((r) => !r.ok);
       setDeadLinks(dead);
+      // 回写全局 deadIds，顶栏角标与设置页检测共用同一份结果
+      onHealthResult?.(dead.map((r) => r.id));
       setHealthNote(
         dead.length
           ? `${dead.length} 个链接无法连通（共检测 ${results.length} 个）`
@@ -169,10 +195,13 @@ export default function DataDialog({
       setChecking(null);
     }
   };
+  doHealthCheckRef.current = doHealthCheck;
 
   const removeDead = (ids: string[]) => {
     onDeleteBookmarks(ids);
     setDeadLinks((prev) => prev.filter((r) => !ids.includes(r.id)));
+    // 删除后同步清掉角标里对应的 id
+    onHealthResult?.((state.settings.healthMonitor.deadIds ?? []).filter((id) => !ids.includes(id)));
     setHealthNote('');
   };
 
@@ -362,7 +391,7 @@ export default function DataDialog({
             <p className="hint">已存在的同名分组会自动跳过，不会重复创建。</p>
           </section>
 
-          <section className="data-section">
+          <section className="data-section" ref={healthSectionRef}>
             <h3 className="data-section__title">书签健康</h3>
             <div className="health-stats">
               <span className="health-chip">

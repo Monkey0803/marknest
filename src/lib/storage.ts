@@ -22,6 +22,11 @@
  *   - 分组（文件夹）数量少，整体压缩存 `mn:grp:N`；
  *   - 兼容读取 v1 / v2，首次写入 v3 后清理旧格式分片。
  *   两项压缩合计可把容量天花板提升到约 1000~2000 条书签。
+ *
+ * 分层存储的跨设备一致性：
+ *   chrome.storage.local 不跨设备，因此归档书签若只写 local，在其它设备会「消失」，
+ *   且一旦对方写入就把不含归档的快照固化。故归档书签同样参与 sync 分片（保证跨设备一致），
+ *   local 另存一份完整副本作为兜底与离线浏览；loadState 以 sync 为权威、local 仅补缺口。
  */
 
 import type { AppState, Bookmark, Group, Settings } from '../types';
@@ -184,8 +189,9 @@ interface V3Payload {
  * 新书签 order 最大、排在末尾 → 通常只影响最后一个分组，利于增量写入。
  */
 async function buildV3Payload(state: AppState): Promise<V3Payload> {
-  // 归档书签下沉到 local，不占 sync 配额
-  const slim = slimBookmarks(state.bookmarks.filter((b) => !b.archived))
+  // 归档书签也写入 sync：local 不跨设备，若归档只存 local，其它设备会看不到这些书签，
+  // 且对方一旦写入就会把「不含归档」的快照固化，造成永久丢失。跨设备一致性优先于省配额。
+  const slim = slimBookmarks(state.bookmarks)
     .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
 
   // 按原始字节累积分组
@@ -223,6 +229,27 @@ async function buildV3Payload(state: AppState): Promise<V3Payload> {
   const grpChunks = grpB64.length <= CHUNK_LIMIT ? [grpB64] : chunkString(grpB64, CHUNK_LIMIT);
 
   return { bmChunks, grpChunks };
+}
+
+/**
+ * 合并云端书签与本机归档副本：
+ * - 云端（sync）现在包含全部书签（含归档），是跨设备权威源；
+ * - 本机归档副本仅用于两点：① 补回 sync 瘦身后丢失的 favicon；
+ *   ② 兜底云端分片异常时缺失的归档项（本地仍有一份，不至于彻底丢失）。
+ */
+function mergeWithLocalArchive(syncBookmarks: Bookmark[], localArchived: Bookmark[]): Bookmark[] {
+  if (!localArchived.length) return syncBookmarks;
+  const localById = new Map(localArchived.map((b) => [b.id, b]));
+  const syncIds = new Set(syncBookmarks.map((b) => b.id));
+  const merged = syncBookmarks.map((b) => {
+    const local = localById.get(b.id);
+    if (!b.favicon && local?.favicon) return { ...b, favicon: local.favicon };
+    return b;
+  });
+  for (const b of localArchived) {
+    if (!syncIds.has(b.id)) merged.push(b);
+  }
+  return merged;
 }
 
 /** 从 storage 读取完整应用状态（兼容 v1 明文分片 / v2 整体压缩 / v3 分组压缩） */
@@ -296,7 +323,7 @@ export async function loadState(): Promise<AppState> {
     } catch (err) {
       console.error('decompress sync data failed', err);
     }
-    return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(groups), settings };
+    return { bookmarks: mergeWithLocalArchive(bookmarks, archived), groups: normalizeGroups(groups), settings };
   }
 
   if (meta.format === 2) {
@@ -318,7 +345,7 @@ export async function loadState(): Promise<AppState> {
         console.error('decompress sync data failed', err);
       }
     }
-    return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(groups), settings };
+    return { bookmarks: mergeWithLocalArchive(bookmarks, archived), groups: normalizeGroups(groups), settings };
   }
 
   // v1：明文分片（老版本数据）
@@ -340,7 +367,7 @@ export async function loadState(): Promise<AppState> {
     (key) => (grData[key] as Group[] | undefined) ?? [],
   );
 
-  return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(rawGroups), settings };
+  return { bookmarks: mergeWithLocalArchive(bookmarks, archived), groups: normalizeGroups(rawGroups), settings };
 }
 
 /**
