@@ -189,6 +189,11 @@ export default function SettingsDialog({
                           className={`keycap ${recording === a.id ? 'is-recording' : ''}`}
                           onKeyDown={(e) => {
                             e.preventDefault();
+                            // 阻断冒泡：否则录制 Mod+K 等组合键时，App 的全局 window keydown
+                            // 会同时执行对应动作（打开快速切换面板/搜索等）。
+                            e.stopPropagation();
+                            // Escape 取消录制，不写入绑定
+                            if (e.key === 'Escape') { setRecording(null); return; }
                             const combo2 = keyComboFromEvent(e);
                             if (!combo2) return;
                             onPatch({ shortcuts: { ...settings.shortcuts, [a.id]: combo2 } });

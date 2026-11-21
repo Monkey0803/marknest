@@ -85,8 +85,19 @@ if (chrome.bookmarks && chrome.bookmarks.onCreated) {
   chrome.bookmarks.onMoved.addListener((id, moveInfo) => {
     void pushBmEvent({ type: 'moved', nodeId: id, parentId: moveInfo.parentId, at: Date.now() });
   });
-  chrome.bookmarks.onRemoved.addListener((id) => {
-    void pushBmEvent({ type: 'removed', nodeId: id, at: Date.now() });
+  chrome.bookmarks.onRemoved.addListener((id, removeInfo) => {
+    // 文件夹被删时 Chrome 只发一次事件（后代不再单独发）。removeInfo.node.children
+    // 携带删除瞬间的子树快照，递归收集所有后代书签 id 一并交给前端处理，
+    // 否则整文件夹删除后其子书签会残留在 Marknest 里、也不进回收站。
+    const descendantIds = [];
+    const walk = (nodes) => {
+      for (const n of nodes || []) {
+        if (n.url) descendantIds.push(n.id);
+        if (n.children) walk(n.children);
+      }
+    };
+    walk(removeInfo && removeInfo.node && removeInfo.node.children);
+    void pushBmEvent({ type: 'removed', nodeId: id, descendantIds, at: Date.now() });
   });
 }
 

@@ -8,7 +8,7 @@ import {
 } from './lib/utils';
 import type { GroupNode } from './lib/utils';
 import {
-  SHORTCUT_ACTIONS, hasAdvancedSyntax, matchesCombo, matchesQuery, matchesSmartFolder,
+  SHORTCUT_ACTIONS, autoTagsFor, hasAdvancedSyntax, matchesCombo, matchesQuery, matchesSmartFolder,
   parseSearchQuery, stripTrackingParams, type MatchContext,
 } from './lib/features';
 import { checkLinks } from './lib/health';
@@ -692,6 +692,12 @@ export default function App() {
       };
       // 快速切换面板打开时，键盘事件全部交给面板自身处理
       if (switcherOpen) return;
+      // 模态弹窗打开时，全局快捷键一律不响应：它们由各自的 useModalFocus 处理 Esc/Tab，
+      // 快捷键设置页录制组合键时若冒泡到这里，会误触发快速切换/搜索等动作。
+      // Escape 交给弹窗自身；这里只拦截快捷键类事件。
+      const anyModalOpen = settingsOpen || recycleOpen || smartFoldersOpen || insightsOpen
+        || batchEditOpen || pinTarget !== null;
+      if (anyModalOpen && e.key !== 'Escape') return;
       if (hit('command')) {
         e.preventDefault();
         setSwitcherOpen(true);
@@ -778,7 +784,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [panel, query, activeTag, focusedId, selectMode, selectAll, clearSelection, toggleSelect, view,
     openAddDialog, locateBookmark, performUndo, performRedo, switcherOpen,
-    createGroupOpen, bookmarkDialog, groupSettingsOpen, pendingDeleteGroupId, tagPanelOpen, bulkTagOpen]);
+    createGroupOpen, bookmarkDialog, groupSettingsOpen, pendingDeleteGroupId, tagPanelOpen, bulkTagOpen,
+    settingsOpen, recycleOpen, smartFoldersOpen, insightsOpen, batchEditOpen, pinTarget]);
 
   // 键盘焦点 / 定位命中的卡片滚到列表中央。列表受 useDeferredValue 影响可能晚一帧才刷新，
   // 因此逐帧重试直到卡片出现；直接设置滚动容器位置，不依赖浏览器对 scrollIntoView 的行为差异。
@@ -1095,10 +1102,15 @@ export default function App() {
   };
 
   const handleShareGroup = (gid: string) => {
-    const html = exportGroupHtml(gid, allBookmarks, groups);
+    // 分享给他人时排除所有私密分组（含子树），无论当前是否已解锁——私密内容不外泄
+    const excluded = new Set<string>();
+    for (const g of allGroups) {
+      if (g.private) groupSubtreeIds(allGroups, g.id).forEach((id) => excluded.add(id));
+    }
+    const html = exportGroupHtml(gid, allBookmarks, groups, excluded);
     const name = groupById.get(gid)?.name ?? '分组';
     downloadFile(html, `marknest-share-${name}.html`, 'text/html;charset=utf-8');
-    showToast('已导出只读分享页 HTML');
+    showToast('已导出只读分享页 HTML（已排除私密分组）');
   };
 
   /* ------------------------ 侧栏宽度拖拽 ------------------------ */
@@ -1269,13 +1281,17 @@ export default function App() {
           }
           existing.add(norm);
           knownBrowserIds.add(node.id);
+          const cleanUrl = latest.settings.stripTracking ? stripTrackingParams(node.url) : node.url;
+          const title = node.title || getHost(node.url);
+          // 自动打标签：与标签页收藏/右键收藏口径一致
+          const tags = autoTagsFor(latest.settings.autoTagRules, { tags: [], url: cleanUrl, title });
           newItems.push({
             id: crypto.randomUUID(),
-            title: node.title || getHost(node.url),
-            url: settings.stripTracking ? stripTrackingParams(node.url) : node.url,
+            title,
+            url: cleanUrl,
             description: '',
             groupId: parentGroupId,
-            tags: [],
+            tags,
             favicon: '',
             createdAt: now + imported,
             updatedAt: now + imported,

@@ -195,7 +195,7 @@ export function matchesSmartFolder(bm: Bookmark, folder: SmartFolder, ctx: Match
 /* ------------------------------ 自动打标签 ------------------------------ */
 
 /** 单条规则是否命中书签 */
-export function ruleMatches(rule: AutoTagRule, bm: Bookmark): boolean {
+export function ruleMatches(rule: AutoTagRule, bm: Pick<Bookmark, 'url' | 'title'>): boolean {
   const pattern = rule.pattern.trim().toLowerCase();
   if (!pattern) return false;
   if (rule.kind === 'domain') {
@@ -207,7 +207,7 @@ export function ruleMatches(rule: AutoTagRule, bm: Bookmark): boolean {
 }
 
 /** 按规则集计算某书签应自动追加的标签（已存在的标签不会重复） */
-export function autoTagsFor(rules: AutoTagRule[], bm: Bookmark): string[] {
+export function autoTagsFor(rules: AutoTagRule[], bm: Pick<Bookmark, 'tags' | 'url' | 'title'>): string[] {
   const existing = new Set(bm.tags.map((t) => t.toLowerCase()));
   const add: string[] = [];
   for (const rule of rules) {

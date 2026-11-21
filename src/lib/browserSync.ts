@@ -7,15 +7,16 @@
  */
 
 import type { AppState, Bookmark, Group } from '../types';
-import { uid } from './utils';
-import { stripTrackingParams } from './features';
+import { groupSubtreeIds, uid } from './utils';
+import { autoTagsFor, stripTrackingParams } from './features';
 
 export const BROWSER_EVENTS_KEY = 'mn:browser-events';
 
 export type BrowserBmEvent =
   | { type: 'created'; nodeId: string; title: string; url: string; parentId: string | null; at: number }
   | { type: 'changed'; nodeId: string; title?: string; url?: string; at: number }
-  | { type: 'removed'; nodeId: string; at: number }
+  /** 删除事件；文件夹删除时 descendantIds 携带被一并删除的后代书签 id */
+  | { type: 'removed'; nodeId: string; descendantIds?: string[]; at: number }
   | { type: 'moved'; nodeId: string; parentId: string | null; at: number };
 
 /** 读取队列 */
@@ -96,15 +97,27 @@ export function mergeBrowserEvents(state: AppState, events: BrowserBmEvent[]): M
       }
       const gid = groupForParent(ev.parentId);
       const cleanUrl = settings.stripTracking ? stripTrackingParams(ev.url) : ev.url;
+      const title = ev.title || ev.url;
+      // 自动打标签：与标签页收藏/右键收藏/全量导入口径一致
+      const tags = autoTagsFor(settings.autoTagRules, { tags: [], url: cleanUrl, title });
       const bm: Bookmark = {
-        id: uid(), title: ev.title || ev.url, url: cleanUrl, description: '', groupId: gid,
-        tags: [], favicon: '', createdAt: now, updatedAt: now, visitedAt: 0, visits: 0,
+        id: uid(), title, url: cleanUrl, description: '', groupId: gid,
+        tags, favicon: '', createdAt: now, updatedAt: now, visitedAt: 0, visits: 0,
         pinned: false, order: now + added, browserId: ev.nodeId,
       };
       bookmarks = [bm, ...bookmarks];
       byBrowserId.set(ev.nodeId, bm);
       added += 1;
     } else if (ev.type === 'changed') {
+      // 文件夹改名：folderMap 命中说明是文件夹（书签由 byBrowserId 索引）
+      const folderGroupId = folderMap[ev.nodeId];
+      if (folderGroupId) {
+        if (ev.title !== undefined) {
+          groups = groups.map((g) => g.id === folderGroupId ? { ...g, name: ev.title! } : g);
+          updated += 1;
+        }
+        continue;
+      }
       const bm = byBrowserId.get(ev.nodeId);
       if (!bm) continue;
       const cleanChangedUrl = ev.url && /^https?:\/\//i.test(ev.url)
@@ -120,6 +133,16 @@ export function mergeBrowserEvents(state: AppState, events: BrowserBmEvent[]): M
         : b);
       updated += 1;
     } else if (ev.type === 'moved') {
+      // 文件夹移动：更新对应分组的 parentId（带防环校验）
+      const folderGroupId = folderMap[ev.nodeId];
+      if (folderGroupId) {
+        const targetParent = groupForParent(ev.parentId);
+        // 不能把分组挂到自己或自己的后代下
+        if (targetParent && groupSubtreeIds(groups, folderGroupId).has(targetParent)) continue;
+        groups = groups.map((g) => g.id === folderGroupId ? { ...g, parentId: targetParent } : g);
+        updated += 1;
+        continue;
+      }
       const bm = byBrowserId.get(ev.nodeId);
       if (!bm) continue;
       const gid = groupForParent(ev.parentId);
@@ -127,9 +150,22 @@ export function mergeBrowserEvents(state: AppState, events: BrowserBmEvent[]): M
       updated += 1;
     } else if (ev.type === 'removed') {
       const bm = byBrowserId.get(ev.nodeId);
-      if (!bm) {
-        // 可能是文件夹被删：清掉映射，分组保留（数据不丢）
-        delete folderMap[ev.nodeId];
+      // 文件夹删除：后台随事件带来的后代书签一并处理，并清掉文件夹映射
+      const folderGroupId = folderMap[ev.nodeId];
+      if (folderGroupId || !bm) {
+        if (folderGroupId) delete folderMap[ev.nodeId];
+        const descendants = new Set(ev.descendantIds ?? []);
+        if (descendants.size) {
+          if (settings.browserSync.syncRemovals) {
+            bookmarks = bookmarks.map((b) => b.browserId && descendants.has(b.browserId)
+              ? { ...b, deletedAt: now, updatedAt: now }
+              : b);
+          } else {
+            bookmarks = bookmarks.filter((b) => !(b.browserId && descendants.has(b.browserId)));
+          }
+          removed += descendants.size;
+          descendants.forEach((id) => byBrowserId.delete(id));
+        }
         continue;
       }
       if (settings.browserSync.syncRemovals) {

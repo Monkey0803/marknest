@@ -415,14 +415,24 @@ export function exportToHtml(bookmarks: Bookmark[], groups: Group[]): string {
   return lines.join('\n');
 }
 
-/** 导出某个分组（含子分组）为独立只读 HTML 分享页，可发给他人直接打开 */
-export function exportGroupHtml(groupId: string, bookmarks: Bookmark[], groups: Group[]): string {
+/**
+ * 导出某个分组（含子分组）为独立只读 HTML 分享页，可发给他人直接打开。
+ * excludedGroupIds：需要排除的分组 id（含其子树），用于剔除私密分组，避免分享页泄露。
+ */
+export function exportGroupHtml(
+  groupId: string,
+  bookmarks: Bookmark[],
+  groups: Group[],
+  excludedGroupIds: ReadonlySet<string> = new Set(),
+): string {
+  if (excludedGroupIds.has(groupId)) return '<!DOCTYPE html><html><body>无可分享内容</body></html>';
   const esc = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const subIds = groupSubtreeIds(groups, groupId);
   const group = groups.find((g) => g.id === groupId);
   const title = group?.name ?? '书签分享';
-  const items = bookmarks.filter((b) => !b.deletedAt && b.groupId && subIds.has(b.groupId));
+  const items = bookmarks.filter((b) =>
+    !b.deletedAt && b.groupId && subIds.has(b.groupId) && !excludedGroupIds.has(b.groupId));
   const byGroup = new Map<string, Bookmark[]>();
   items.forEach((b) => {
     const arr = byGroup.get(b.groupId!) ?? [];
@@ -430,10 +440,11 @@ export function exportGroupHtml(groupId: string, bookmarks: Bookmark[], groups: 
     byGroup.set(b.groupId!, arr);
   });
   const section = (gid: string, depth: number): string => {
+    if (excludedGroupIds.has(gid)) return '';
     const g = groups.find((x) => x.id === gid);
     if (!g) return '';
     const list = byGroup.get(gid) ?? [];
-    const children = groups.filter((x) => x.parentId === gid);
+    const children = groups.filter((x) => x.parentId === gid && !excludedGroupIds.has(x.id));
     const links = list.map((b) =>
       `<li><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a>${
         b.description ? `<p>${esc(b.description)}</p>` : ''
