@@ -213,7 +213,7 @@ export default function SettingsDialog({
                   <span>检测间隔（小时）</span>
                   <input type="number" min={1} max={720} value={settings.healthMonitor.intervalHours} onChange={(e) => patchHealth({ intervalHours: Math.max(1, Number(e.target.value) || 1) })} />
                 </label>
-                <button className="btn btn--ghost btn--sm" onClick={onRunHealthCheck}><IconRefresh size={13} /> 立即检测</button>
+                <button className="btn btn--ghost btn--sm" onClick={onRunHealthCheck}><IconRefresh size={13} /> 立即检测并查看结果</button>
                 {settings.healthMonitor.lastRunAt > 0 && (
                   <p className="hint">上次检测：{new Date(settings.healthMonitor.lastRunAt).toLocaleString('zh-CN')}，发现 {settings.healthMonitor.deadIds.length} 个死链</p>
                 )}

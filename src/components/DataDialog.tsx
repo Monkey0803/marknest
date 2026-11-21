@@ -24,6 +24,8 @@ function readLastExportAt(): number {
 interface Props {
   open: boolean;
   state: AppState;
+  /** 面向用户的可见书签（已排除回收站软删项与未解锁私密分组），用于检测/健康统计/导出 */
+  visibleBookmarks: Bookmark[];
   /** 重复书签的冗余条数 */
   duplicates: string[];
   /** 重复组数 */
@@ -45,7 +47,7 @@ interface Props {
 }
 
 export default function DataDialog({
-  open, state, duplicates, duplicateGroupCount, onClose, onImportJson, onImportHtml,
+  open, state, visibleBookmarks, duplicates, duplicateGroupCount, onClose, onImportJson, onImportHtml,
   onOpenDedupe, onImportBrowser, onDeleteBookmarks, onApplyTemplate,
   focusHealth, onHealthResult,
 }: Props) {
@@ -139,7 +141,7 @@ export default function DataDialog({
 
   const doExportHtml = () => {
     const stamp = new Date().toISOString().slice(0, 10);
-    downloadFile(exportToHtml(state.bookmarks, state.groups), `marknest-${stamp}.html`, 'text/html');
+    downloadFile(exportToHtml(visibleBookmarks, state.groups), `marknest-${stamp}.html`, 'text/html');
     setMessage('已导出 HTML 书签文件');
   };
 
@@ -182,7 +184,7 @@ export default function DataDialog({
     setChecking({ done: 0, total: 0 });
     try {
       // 与顶栏角标口径一致：排除回收站软删项，只检测在用的书签
-      const targets = state.bookmarks.filter((b) => !b.deletedAt);
+      const targets = visibleBookmarks;
       const results = await checkLinks(targets, (done, total) => setChecking({ done, total }));
       const dead = results.filter((r) => !r.ok);
       setDeadLinks(dead);
@@ -209,8 +211,8 @@ export default function DataDialog({
     setHealthNote('');
   };
 
-  const stats = healthStats(state.bookmarks);
-  const deadTitle = (id: string) => state.bookmarks.find((b) => b.id === id)?.title ?? '';
+  const stats = healthStats(visibleBookmarks);
+  const deadTitle = (id: string) => visibleBookmarks.find((b) => b.id === id)?.title ?? '';
 
   /* 备份提醒：从未导出或超过 30 天未导出时提示 */
   const lastExportAt = readLastExportAt();

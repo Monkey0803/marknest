@@ -11,7 +11,6 @@ import {
   SHORTCUT_ACTIONS, autoTagsFor, findDuplicateGroups, hasAdvancedSyntax, matchesCombo,
   matchesQuery, matchesSmartFolder, parseSearchQuery, stripTrackingParams, type MatchContext,
 } from './lib/features';
-import { checkLinks } from './lib/health';
 import type { AppState, Bookmark, Group, SortMode } from './types';
 import SyncBadge from './components/SyncBadge';
 import BookmarkDialog from './components/BookmarkDialog';
@@ -146,6 +145,12 @@ export default function App() {
     }
     return set;
   }, [allGroups, unlockedGroups, settings.pinHash]);
+  /** 所有面向用户的出口共用的可见书签集合：排除回收站软删项 + 未解锁的私密分组。
+   *  主列表、搜索、计数、去重、洞察、QuickSwitcher、导出等一律基于它，避免 PIN 被绕过。 */
+  const visibleBookmarks = useMemo(
+    () => bookmarks.filter((b) => !b.groupId || !lockedGroupIds.has(b.groupId)),
+    [bookmarks, lockedGroupIds],
+  );
   const groups = allGroups;
   /** 始终指向最新 store，供事件监听/延时回调使用（避免闭包过期和监听器频繁重绑） */
   const storeRef = useRef(store);
@@ -480,7 +485,7 @@ export default function App() {
   /** 每个分组包含其后代的书签总数（父分组计数覆盖整棵子树） */
   const groupCounts = useMemo(() => {
     const own: Record<string, number> = {};
-    bookmarks.forEach((b) => {
+    visibleBookmarks.forEach((b) => {
       if (b.groupId) own[b.groupId] = (own[b.groupId] ?? 0) + 1;
     });
     const total: Record<string, number> = {};
@@ -490,7 +495,7 @@ export default function App() {
       total[gid] = n;
     });
     return total;
-  }, [bookmarks, subtreeMap]);
+  }, [visibleBookmarks, subtreeMap]);
 
   /** 待删除分组的影响范围（直接 + 间接子分组数、子树内书签数） */
   const pendingDeleteImpact = useMemo(() => {
@@ -533,20 +538,20 @@ export default function App() {
   /** 标签 → 使用次数（标签管理面板用） */
   const tagCounts = useMemo(() => {
     const m = new Map<string, number>();
-    bookmarks.forEach((b) => b.tags.forEach((t) => m.set(t, (m.get(t) ?? 0) + 1)));
+    visibleBookmarks.forEach((b) => b.tags.forEach((t) => m.set(t, (m.get(t) ?? 0) + 1)));
     return Array.from(m.entries())
       .map(([tag, count]) => ({ tag, count }))
       .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'zh-CN'));
-  }, [bookmarks]);
+  }, [visibleBookmarks]);
 
   const allTags = useMemo(() => {
     const s = new Set<string>();
-    bookmarks.forEach((b) => b.tags.forEach((t) => s.add(t)));
+    visibleBookmarks.forEach((b) => b.tags.forEach((t) => s.add(t)));
     return Array.from(s).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-  }, [bookmarks]);
+  }, [visibleBookmarks]);
 
   /** 智能去重：按 URL 指纹归组（忽略协议/www/追踪参数/hash 等），每组推荐信息最完整的保留项 */
-  const duplicateGroups = useMemo(() => findDuplicateGroups(allBookmarks), [allBookmarks]);
+  const duplicateGroups = useMemo(() => findDuplicateGroups(visibleBookmarks), [visibleBookmarks]);
   /** DataDialog 兼容用的冗余 id 列表（保留每组推荐项，其余为冗余） */
   const duplicates = useMemo(
     () => duplicateGroups.flatMap((g) => g.members.slice(1).map((m) => m.bookmark.id)),
@@ -555,14 +560,14 @@ export default function App() {
 
   /** 阅读清单未读数量（侧栏角标） */
   const unreadCount = useMemo(
-    () => bookmarks.filter((b) => b.readLater).length,
-    [bookmarks],
+    () => visibleBookmarks.filter((b) => b.readLater).length,
+    [visibleBookmarks],
   );
 
   /** 语义重复的标签组（仅大小写/全半角/空白差异） */
   const duplicateTags = useMemo(
-    () => findDuplicateTags(bookmarks),
-    [bookmarks],
+    () => findDuplicateTags(visibleBookmarks),
+    [visibleBookmarks],
   );
 
   /** 回收站数量 */
@@ -576,14 +581,13 @@ export default function App() {
     const ctx: MatchContext = { groupPathText };
     const out: Record<string, number> = {};
     settings.smartFolders.forEach((f) => {
-      out[f.id] = bookmarks.filter((b) => !b.groupId || !lockedGroupIds.has(b.groupId))
-        .filter((b) => matchesSmartFolder(b, f, ctx)).length;
+      out[f.id] = visibleBookmarks.filter((b) => matchesSmartFolder(b, f, ctx)).length;
     });
     return out;
-  }, [settings.smartFolders, bookmarks, groupPathText, lockedGroupIds]);
+  }, [settings.smartFolders, visibleBookmarks, groupPathText]);
 
-  /** 死链角标数量 */
-  const deadLinkCount = settings.healthMonitor.deadIds.filter((id) => bookmarks.some((b) => b.id === id)).length;
+  /** 死链角标数量（排除软删与未解锁私密分组） */
+  const deadLinkCount = settings.healthMonitor.deadIds.filter((id) => visibleBookmarks.some((b) => b.id === id)).length;
 
   /** 键盘监听用 ref 读取最新列表，避免每次筛选变化都重绑 window 监听 */
   const filteredRef = useRef<Bookmark[]>([]);
@@ -605,9 +609,8 @@ export default function App() {
     const subtree = !VIRTUAL_VIEWS.has(activeGroup) && !smart
       ? subtreeMap.get(activeGroup) ?? null
       : null;
-    let items = bookmarks.filter((b) => {
-      // 私密分组未解锁：隐藏其书签
-      if (b.groupId && lockedGroupIds.has(b.groupId)) return false;
+    // visibleBookmarks 已排除软删项与未解锁的私密分组，所有常规视图共用
+    let items = visibleBookmarks.filter((b) => {
       if (activeGroup === 'ungrouped' && b.groupId) return false;
       if (subtree) {
         // 选中父分组时，同时展示所有嵌套子分组里的书签
@@ -1119,13 +1122,10 @@ export default function App() {
     showToast(n ? `已取回 ${n} 个归档书签` : '没有归档书签');
   };
   const handleRunHealthCheck = () => {
-    showToast('正在检测死链，请稍候…');
-    const targets = allBookmarks.filter((b) => !b.deletedAt && /^https?:\/\//i.test(b.url));
-    void checkLinks(targets, () => {}).then((results) => {
-      const deadIds = results.filter((r) => !r.ok).map((r) => r.id);
-      store.setSetting('healthMonitor', { ...settings.healthMonitor, lastRunAt: Date.now(), deadIds });
-      showToast(`检测完成：${deadIds.length} 个死链（共检测 ${targets.length} 个）`);
-    });
+    // 复用角标/定时提醒的同一路径：打开数据面板健康区，自动检测并展示可逐条删除的结果列表
+    setSettingsOpen(false);
+    setFocusHealth(true);
+    setPanel('data');
   };
   const handleSetPin = (hash: string | undefined) => {
     pushUndo('修改 PIN');
@@ -1185,10 +1185,15 @@ export default function App() {
 
   /** 在新浏览器窗口打开指定分组下的所有书签链接（含嵌套子分组） */
   const handleOpenGroupWindow = (groupId: string | null) => {
+    // 锁定分组（或其祖先）未解锁时，禁止批量打开，避免绕过 PIN 泄露网址
+    if (groupId && groupId !== 'all' && groupId !== 'ungrouped' && lockedGroupIds.has(groupId)) {
+      showToast('请先解锁该私密分组');
+      return;
+    }
     const ids = groupId && groupId !== 'all' && groupId !== 'ungrouped'
       ? subtreeMap.get(groupId) ?? new Set([groupId])
       : null;
-    const urls = bookmarks
+    const urls = visibleBookmarks
       .filter((b) => {
         if (groupId === 'all') return true;
         if (groupId === 'ungrouped') return !b.groupId;
@@ -1817,14 +1822,16 @@ export default function App() {
                     <span className="nav-item__name">{g.name}</span>
                     <em>{formatCount(groupCounts[g.id] ?? 0)}</em>
                   </button>
-                  <button
-                    className="nav-group__open"
-                    onClick={() => handleOpenGroupWindow(g.id)}
-                    title={`在新窗口打开「${g.name}」的所有标签`}
-                    aria-label={`在新窗口打开「${g.name}」的所有标签`}
-                  >
-                    <IconOpenWindow size={12} />
-                  </button>
+                  {!lockedGroupIds.has(g.id) && (
+                    <button
+                      className="nav-group__open"
+                      onClick={() => handleOpenGroupWindow(g.id)}
+                      title={`在新窗口打开「${g.name}」的所有标签`}
+                      aria-label={`在新窗口打开「${g.name}」的所有标签`}
+                    >
+                      <IconOpenWindow size={12} />
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -2062,7 +2069,7 @@ export default function App() {
 
           {view === 'tabs' ? (
             <TabsPanel
-              bookmarks={bookmarks}
+              bookmarks={visibleBookmarks}
               groups={groups}
               defaultGroupId={isRealGroup(activeGroup) ? activeGroup : null}
               onRequestCreate={requestCreateGroup}
@@ -2130,7 +2137,7 @@ export default function App() {
                   group={bm.groupId ? groupById.get(bm.groupId) : undefined}
                   groupPathText={bm.groupId ? groupPathText.get(bm.groupId) : undefined}
                   groups={groups}
-                  allBookmarks={bookmarks}
+                  allBookmarks={visibleBookmarks}
                   view={settings.view}
                   isDragging={draggingId === bm.id}
                   selectMode={selectMode}
@@ -2275,6 +2282,7 @@ export default function App() {
       <DataDialog
         open={panel === 'data'}
         state={store.state}
+        visibleBookmarks={visibleBookmarks}
         duplicates={duplicates}
         duplicateGroupCount={duplicateGroups.length}
         onOpenDedupe={() => { setPanel(null); setDedupeOpen(true); }}
@@ -2348,7 +2356,7 @@ export default function App() {
       />
       <QuickSwitcher
         open={switcherOpen}
-        bookmarks={bookmarks}
+        bookmarks={visibleBookmarks}
         groups={groups}
         commands={switcherCommands}
         onClose={() => setSwitcherOpen(false)}
@@ -2390,10 +2398,10 @@ export default function App() {
         onClose={() => setSmartFoldersOpen(false)}
         onSave={handleSaveSmartFolders}
       />
-      <InsightsDialog open={insightsOpen} bookmarks={allBookmarks} onClose={() => setInsightsOpen(false)} />
+      <InsightsDialog open={insightsOpen} bookmarks={visibleBookmarks} onClose={() => setInsightsOpen(false)} />
       <DedupeDialog
         open={dedupeOpen}
-        bookmarks={allBookmarks}
+        bookmarks={visibleBookmarks}
         groups={allGroups}
         onClose={() => setDedupeOpen(false)}
         onApply={handleApplyDedupe}
