@@ -158,6 +158,7 @@ export default function BookmarkRow({
             <span className="bm__title" title={bm.title}><Hl text={bm.title} query={query} /></span>
             {bm.pinned && <IconPin size={12} className="bm__pin-mark" />}
             {bm.readLater && <span className="bm__pin-mark" title="稍后阅读"><IconReadingList size={12} /></span>}
+            {bm.archived && <span className="bm__pin-mark bm__archived" title="已归档：存于本地，不占同步配额">归档</span>}
           </div>
           <span className="bm__url"><Hl text={getHost(bm.url)} query={query} /></span>
           {bm.description && <p className="bm__desc"><Hl text={bm.description} query={query} /></p>}

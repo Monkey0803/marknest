@@ -29,7 +29,7 @@ export default function GroupDialog({
   /** 移动到分组的菜单：记录被移动的分组与按钮位置 */
   const [moveState, setMoveState] = useState<{ id: string; rect: DOMRect } | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   if (!open) return null;
 

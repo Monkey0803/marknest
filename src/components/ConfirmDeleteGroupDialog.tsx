@@ -22,7 +22,7 @@ export default function ConfirmDeleteGroupDialog({
   open, name, childGroups, bookmarkCount, onConfirm, onClose,
 }: Props) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   if (!open) return null;
 
@@ -56,8 +56,8 @@ export default function ConfirmDeleteGroupDialog({
           </ul>
           <p className="confirm__note">删除后 6 秒内可点底部提示「撤销」恢复原状。</p>
           <div className="modal__actions">
-            <button className="btn btn--ghost" onClick={onClose}>取消</button>
-            <button className="btn btn--danger" onClick={onConfirm} autoFocus>
+            <button className="btn btn--ghost" onClick={onClose} autoFocus>取消</button>
+            <button className="btn btn--danger" onClick={onConfirm}>
               <IconTrash size={14} /> 确认删除
             </button>
           </div>

@@ -78,15 +78,27 @@ export function flattenGroupTree(nodes: GroupNode[]): GroupNode[] {
   return out;
 }
 
-/** 分组自身 + 全部后代分组的 id 集合 */
-export function groupSubtreeIds(groups: Group[], rootId: string): Set<string> {
+/** 构建 parentId → 子分组 id 列表的索引（含脏数据容错：自引用/指向不存在的父一律当顶层） */
+export function buildChildrenIndex(groups: Group[]): Map<string, string[]> {
+  const byId = new Map(groups.map((g) => [g.id, g]));
   const childrenOf = new Map<string, string[]>();
   for (const g of groups) {
-    if (!g.parentId) continue;
-    const arr = childrenOf.get(g.parentId);
+    const pid = g.parentId;
+    if (!pid || pid === g.id || !byId.has(pid)) continue;
+    const arr = childrenOf.get(pid);
     if (arr) arr.push(g.id);
-    else childrenOf.set(g.parentId, [g.id]);
+    else childrenOf.set(pid, [g.id]);
   }
+  return childrenOf;
+}
+
+/** 分组自身 + 全部后代分组的 id 集合 */
+export function groupSubtreeIds(groups: Group[], rootId: string): Set<string> {
+  return subtreeIdsFromIndex(buildChildrenIndex(groups), rootId);
+}
+
+/** 基于已建好的子索引求单个分组的子树，避免重复建图 */
+export function subtreeIdsFromIndex(childrenOf: Map<string, string[]>, rootId: string): Set<string> {
   const out = new Set<string>();
   const walk = (id: string) => {
     if (out.has(id)) return;
@@ -95,6 +107,32 @@ export function groupSubtreeIds(groups: Group[], rootId: string): Set<string> {
   };
   walk(rootId);
   return out;
+}
+
+/**
+ * 一次性算出所有分组的「自身 + 后代」id 集合。
+ * 对 G 个分组只建一次索引、每个分组只被并入祖先链，整体 O(G·depth)，
+ * 替代对每组调用 groupSubtreeIds 造成的 O(G²) 建图开销。
+ */
+export function buildAllSubtrees(groups: Group[]): Map<string, Set<string>> {
+  const childrenOf = buildChildrenIndex(groups);
+  const result = new Map<string, Set<string>>();
+  // 深度优先自底向上合并：先算子节点，再把自己加进去并继承子集合
+  const seen = new Set<string>();
+  const visit = (id: string): Set<string> => {
+    if (result.has(id)) return result.get(id)!;
+    if (seen.has(id)) return new Set([id]); // 环：只保留自己，避免无限递归
+    seen.add(id);
+    const set = new Set<string>([id]);
+    for (const child of childrenOf.get(id) ?? []) {
+      for (const cid of visit(child)) set.add(cid);
+    }
+    result.set(id, set);
+    seen.delete(id);
+    return set;
+  };
+  for (const g of groups) visit(g.id);
+  return result;
 }
 
 /** 从顶层到当前分组的路径（用于面包屑） */
@@ -375,6 +413,52 @@ export function exportToHtml(bookmarks: Bookmark[], groups: Group[]): string {
   lines.push('</DL><p>');
   void stamp;
   return lines.join('\n');
+}
+
+/** 导出某个分组（含子分组）为独立只读 HTML 分享页，可发给他人直接打开 */
+export function exportGroupHtml(groupId: string, bookmarks: Bookmark[], groups: Group[]): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const subIds = groupSubtreeIds(groups, groupId);
+  const group = groups.find((g) => g.id === groupId);
+  const title = group?.name ?? '书签分享';
+  const items = bookmarks.filter((b) => !b.deletedAt && b.groupId && subIds.has(b.groupId));
+  const byGroup = new Map<string, Bookmark[]>();
+  items.forEach((b) => {
+    const arr = byGroup.get(b.groupId!) ?? [];
+    arr.push(b);
+    byGroup.set(b.groupId!, arr);
+  });
+  const section = (gid: string, depth: number): string => {
+    const g = groups.find((x) => x.id === gid);
+    if (!g) return '';
+    const list = byGroup.get(gid) ?? [];
+    const children = groups.filter((x) => x.parentId === gid);
+    const links = list.map((b) =>
+      `<li><a href="${esc(b.url)}" target="_blank" rel="noopener">${esc(b.title)}</a>${
+        b.description ? `<p>${esc(b.description)}</p>` : ''
+      }<small>${esc(getHost(b.url))}</small></li>`,
+    ).join('');
+    return `<section style="margin-left:${depth * 16}px"><h2 style="color:${esc(g.color)}">${esc(g.name)}</h2>${
+      links ? `<ul>${links}</ul>` : '<p class="muted">（此分组暂无书签）</p>'
+    }${children.map((c) => section(c.id, depth + 1)).join('')}</section>`;
+  };
+  const stamp = new Date().toLocaleString('zh-CN');
+  return `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(title)} · 书签分享</title>
+<style>
+:root{color-scheme:light dark}body{font:15px/1.6 -apple-system,"Segoe UI",Roboto,"PingFang SC",sans-serif;max-width:860px;margin:0 auto;padding:32px 20px;color:#222;background:#fff}
+@media(prefers-color-scheme:dark){body{color:#eee;background:#181a1f}a{color:#8ab4f8}}
+h1{border-bottom:2px solid #888;padding-bottom:8px}h2{margin-top:28px;font-size:18px}ul{list-style:none;padding:0}
+li{padding:10px 0;border-bottom:1px solid rgba(128,128,128,.2)}li a{font-weight:600;text-decoration:none}li a:hover{text-decoration:underline}
+li p{margin:4px 0;color:#888;font-size:13px}li small{color:#999;font-size:12px}.muted{color:#999;font-style:italic}
+header p{color:#888;font-size:13px}footer{margin-top:40px;color:#999;font-size:12px;text-align:center}
+</style></head><body>
+<header><h1>📚 ${esc(title)}</h1><p>由 Marknest 导出的只读书签分享页 · ${items.length} 个书签 · 生成于 ${stamp}</p></header>
+${section(groupId, 0)}
+<footer>Shared with Marknest</footer>
+</body></html>`;
 }
 
 export function downloadFile(content: string, filename: string, mime: string): void {

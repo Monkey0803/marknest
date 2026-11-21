@@ -43,6 +43,73 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+/* ------------------- 浏览器书签增量同步 -------------------
+ * 监听 Chrome 书签树的增删改，把变更写入 local 队列；前端消费并合并。
+ * 只有用户在设置里开启 browserSync.enabled 后前端才会真正合并，
+ * 未开启时事件会被前端清空，不会造成重复数据。 */
+const BM_EVENTS_KEY = 'mn:browser-events';
+const MAX_EVENTS = 500;
+
+async function pushBmEvent(evt) {
+  try {
+    const obj = await chrome.storage.local.get(BM_EVENTS_KEY);
+    const list = Array.isArray(obj[BM_EVENTS_KEY]) ? obj[BM_EVENTS_KEY] : [];
+    // 同一节点短时间内的连续事件只保留最新一条，避免队列膨胀
+    const filtered = list.filter((e) => !(e.nodeId === evt.nodeId && evt.type !== 'created'));
+    filtered.push(evt);
+    await chrome.storage.local.set({ [BM_EVENTS_KEY]: filtered.slice(-MAX_EVENTS) });
+  } catch (err) {
+    console.warn('enqueue browser bookmark event failed', err);
+  }
+}
+
+if (chrome.bookmarks && chrome.bookmarks.onCreated) {
+  chrome.bookmarks.onCreated.addListener((id, node) => {
+    void pushBmEvent({
+      type: 'created', nodeId: id, title: node.title || '',
+      url: node.url || '', parentId: node.parentId || null, at: Date.now(),
+    });
+  });
+  chrome.bookmarks.onChanged.addListener((id, changeInfo) => {
+    void pushBmEvent({
+      type: 'changed', nodeId: id, title: changeInfo.title, url: changeInfo.url, at: Date.now(),
+    });
+  });
+  chrome.bookmarks.onMoved.addListener((id, moveInfo) => {
+    void pushBmEvent({ type: 'moved', nodeId: id, parentId: moveInfo.parentId, at: Date.now() });
+  });
+  chrome.bookmarks.onRemoved.addListener((id) => {
+    void pushBmEvent({ type: 'removed', nodeId: id, at: Date.now() });
+  });
+}
+
+/* ------------------- 死链巡检定时提醒 -------------------
+ * 真正的检测由前端在数据面板触发（扩展页跨域 fetch 受限）；
+ * 这里只负责按间隔唤醒，写一个巡检请求标记，前端打开时读取。 */
+const HEALTH_ALARM = 'mn-health-check';
+async function syncHealthAlarm() {
+  try {
+    await chrome.alarms.clear(HEALTH_ALARM);
+    const obj = await chrome.storage.sync.get('mn:settings');
+    const hs = obj['mn:settings']?.healthMonitor;
+    if (hs && hs.enabled) {
+      const hours = Math.max(1, Number(hs.intervalHours) || 24);
+      await chrome.alarms.create(HEALTH_ALARM, { periodInMinutes: hours * 60 });
+    }
+  } catch (err) {
+    console.warn('sync health alarm failed', err);
+  }
+}
+chrome.runtime.onInstalled.addListener(() => { void syncHealthAlarm(); });
+chrome.runtime.onStartup?.addListener?.(() => { void syncHealthAlarm(); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'sync' && changes['mn:settings']) void syncHealthAlarm();
+});
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== HEALTH_ALARM) return;
+  void chrome.storage.local.set({ 'mn:health-due': Date.now() }).catch(() => {});
+});
+
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === MENU_OPEN_MANAGER) {
     chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
@@ -60,58 +127,23 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
   if (!url) return;
 
-  // 直接写入 storage.sync 的书签分片，逻辑与前端 addBookmark 保持一致
+  // 右键收藏入队，交给前端走 addBookmark 正规流程落盘。
+  // 早期版本曾在这里直接拼 v1 明文分片（mn:bm:N），但前端早已升级到 v3 压缩分片，
+  // 导致右键收藏的书签前端根本读不到、且无去重——这里改为纯入队，格式只由前端一处维护。
   try {
-    const metaObj = await chrome.storage.sync.get('mn:meta');
-    const meta = metaObj['mn:meta'];
-    const now = Date.now();
-    const bookmark = {
-      id: crypto.randomUUID(),
-      title,
+    const key = 'mn:pending-add';
+    const obj = await chrome.storage.sync.get(key);
+    const list = obj[key] || [];
+    const norm = (u) => u.replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    // 队列内去重：同一页面反复右键只保留一条
+    if (list.some((item) => norm(item.url) === norm(url))) return;
+    list.push({
       url,
-      description: '',
-      groupId: null,
-      tags: [],
-      // 收藏整页用标签页图标；收藏链接时留空，由展示层按链接域名推导真实站点图标
+      title,
       favicon: info.menuItemId === MENU_SAVE_LINK ? '' : (tab?.favIconUrl || ''),
-      createdAt: now,
-      updatedAt: now,
-      visitedAt: 0,
-      visits: 0,
-      pinned: false,
-      order: now,
-    };
-
-    if (meta && meta.bmChunks > 0) {
-      const lastKey = `mn:bm:${meta.bmChunks - 1}`;
-      const data = await chrome.storage.sync.get(lastKey);
-      const chunk = data[lastKey] || [];
-      chunk.push(bookmark);
-      // 若分片过大则新建一片（保守 6000 字节）
-      if (new TextEncoder().encode(JSON.stringify(chunk)).length > 6000) {
-        const newKey = `mn:bm:${meta.bmChunks}`;
-        await chrome.storage.sync.set({
-          [newKey]: [bookmark],
-          'mn:meta': { ...meta, bmChunks: meta.bmChunks + 1, updatedAt: now },
-        });
-      } else {
-        await chrome.storage.sync.set({
-          [lastKey]: chunk,
-          'mn:meta': { ...meta, updatedAt: now },
-        });
-      }
-    } else {
-      await chrome.storage.sync.set({
-        'mn:bm:0': [bookmark],
-        'mn:meta': {
-          version: 1,
-          bmChunks: 1,
-          grChunks: meta?.grChunks || 0,
-          updatedAt: now,
-          deviceId: meta?.deviceId || crypto.randomUUID(),
-        },
-      });
-    }
+      createdAt: Date.now(),
+    });
+    await chrome.storage.sync.set({ [key]: list.slice(-50) });
   } catch (err) {
     console.error('Marknest save failed', err);
   }

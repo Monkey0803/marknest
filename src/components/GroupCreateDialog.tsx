@@ -19,7 +19,7 @@ interface Props {
  */
 export default function GroupCreateDialog({ open, parentName, onSubmit, onClose }: Props) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   useEffect(() => {
     if (!open) return;

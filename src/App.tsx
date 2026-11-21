@@ -3,9 +3,15 @@ import { flushSync } from 'react-dom';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { useBookmarkStore } from './store/useBookmarkStore';
 import {
-  buildGroupTree, findDuplicateTags, findDuplicates, formatCount, getHost, groupPath, groupSubtreeIds, normalizeUrl, sortBookmarks,
+  buildAllSubtrees, buildGroupTree, downloadFile, exportGroupHtml, findDuplicateTags, findDuplicates,
+  formatCount, getHost, groupPath, groupSubtreeIds, normalizeUrl, sortBookmarks,
 } from './lib/utils';
 import type { GroupNode } from './lib/utils';
+import {
+  SHORTCUT_ACTIONS, hasAdvancedSyntax, matchesCombo, matchesQuery, matchesSmartFolder,
+  parseSearchQuery, stripTrackingParams, type MatchContext,
+} from './lib/features';
+import { checkLinks } from './lib/health';
 import type { AppState, Bookmark, Group, SortMode } from './types';
 import SyncBadge from './components/SyncBadge';
 import BookmarkDialog from './components/BookmarkDialog';
@@ -26,14 +32,24 @@ import {
   IconSun, IconMoon, IconMaximize, IconClock, IconKeyboard,
   IconBookmark, IconClose, IconTabs, IconOpenWindow, IconChevron,
   IconSparkle, IconCheck, IconMoveTo, IconTrash, IconMenu, IconSort, IconArchive,
-  IconReadingList, IconPencil, IconLocate, IconThemeAuto,
+  IconReadingList, IconPencil, IconLocate, IconThemeAuto, IconTrashBin, IconWand,
+  IconSmartFolder, IconChart, IconSliders, IconLock, IconEdit, IconAlert, IconRestore,
 } from './components/Icons';
 import SortMenu from './components/SortMenu';
 import EmptyState from './components/EmptyState';
 import ShortcutsDialog from './components/ShortcutsDialog';
 import ConfirmDeleteGroupDialog from './components/ConfirmDeleteGroupDialog';
+import RecycleBinDialog from './components/RecycleBinDialog';
+import SmartFoldersDialog from './components/SmartFoldersDialog';
+import InsightsDialog from './components/InsightsDialog';
+import BatchEditDialog from './components/BatchEditDialog';
+import SettingsDialog from './components/SettingsDialog';
+import PinDialog from './components/PinDialog';
 
 type Panel = 'bookmarks' | 'groups' | 'data' | 'shortcuts';
+
+/** 虚拟视图 id（侧栏快捷入口，非真实分组） */
+const VIRTUAL_VIEWS = new Set(['all', 'ungrouped', 'recent', 'recent-added', 'read-later', 'trash']);
 
 export default function App() {
   const store = useBookmarkStore();
@@ -99,8 +115,32 @@ export default function App() {
   const locateTimer = useRef<number | undefined>(undefined);
   const searchRef = useRef<HTMLInputElement>(null);
   const dragId = useRef<string | null>(null);
+  /** 拖拽高亮用 state 驱动：ref 变化不会触发渲染，拖完会残留高亮 */
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  /* ---- 新功能：回收站 / 智能文件夹 / 洞察 / 批量编辑 / 设置 / PIN ---- */
+  const [recycleOpen, setRecycleOpen] = useState(false);
+  const [smartFoldersOpen, setSmartFoldersOpen] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [batchEditOpen, setBatchEditOpen] = useState(false);
+  /** 待解锁的私密分组 id */
+  const [pinTarget, setPinTarget] = useState<string | null>(null);
+  /** 本次会话已解锁的私密分组（刷新后重新锁定） */
+  const [unlockedGroups, setUnlockedGroups] = useState<Set<string>>(new Set());
 
-  const { bookmarks, groups, settings } = store.state;
+  const { bookmarks: allBookmarks, groups: allGroups, settings } = store.state;
+  /** 常规视图用的书签：排除回收站软删项（回收站视图单独读取 allBookmarks） */
+  const bookmarks = useMemo(() => allBookmarks.filter((b) => !b.deletedAt), [allBookmarks]);
+  /** 私密分组保护：未解锁的私密分组（及其子树）id 集合，用于隐藏其书签 */
+  const lockedGroupIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of allGroups) {
+      if (!g.private || unlockedGroups.has(g.id)) continue;
+      groupSubtreeIds(allGroups, g.id).forEach((id) => set.add(id));
+    }
+    return set;
+  }, [allGroups, unlockedGroups]);
+  const groups = allGroups;
   /** 始终指向最新 store，供事件监听/延时回调使用（避免闭包过期和监听器频繁重绑） */
   const storeRef = useRef(store);
   storeRef.current = store;
@@ -144,13 +184,6 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2200);
   }, []);
 
-  /** 带「撤销」的提示：删除类操作先执行再给用户一次反悔机会 */
-  const showUndo = useCallback((msg: string, undo: () => void) => {
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    setToast({ text: msg, actionLabel: '撤销', action: undo });
-    toastTimer.current = window.setTimeout(() => setToast(null), 6000);
-  }, []);
-
   /** 带自定义动作的提示（如「恢复我的版本」） */
   const showAction = useCallback((msg: string, label: string, action: () => void) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -159,34 +192,56 @@ export default function App() {
   }, []);
 
   /* ------------------------ 多级撤销 / 重做（⌘Z / ⌘⇧Z） ------------------------ */
-  /** 撤销栈：记录每个可逆操作前的完整状态快照，⌘Z 逐步回退 */
-  const undoStack = useRef<{ state: AppState; label: string }[]>([]);
-  /** 重做栈：撤销时被舍弃的状态，⌘⇧Z 逐步恢复；有新改动时清空 */
-  const redoStack = useRef<{ state: AppState; label: string }[]>([]);
-  /** 在改动前调用：把当前完整状态压入撤销栈（保留最近 20 步），返回该快照供即时撤销复用 */
-  const pushUndo = useCallback((label: string): AppState => {
+  /** 撤销条目带唯一 token：toast 的「撤销」凭 token 精确撤销对应操作，不再盲弹栈顶 */
+  interface UndoEntry { state: AppState; label: string; token: number }
+  const undoStack = useRef<UndoEntry[]>([]);
+  const redoStack = useRef<UndoEntry[]>([]);
+  const undoTokenSeq = useRef(0);
+  /** 最近一次 pushUndo 的 token，供 showUndo 绑定 */
+  const lastUndoToken = useRef<number | null>(null);
+  /** 在改动前调用：把当前完整状态压入撤销栈（保留最近 20 步），返回该条目的 token */
+  const pushUndo = useCallback((label: string): number => {
+    const token = ++undoTokenSeq.current;
     const snapshot = storeRef.current.state;
-    undoStack.current = [...undoStack.current, { state: snapshot, label }].slice(-20);
+    undoStack.current = [...undoStack.current, { state: snapshot, label, token }].slice(-20);
     // 一次新改动意味着此前的「重做」分支作废
     redoStack.current = [];
-    return snapshot;
+    lastUndoToken.current = token;
+    return token;
   }, []);
 
-  /**
-   * 撤销一步：弹栈 → 把当前状态存入重做栈 → 恢复快照。
-   * toast 上的「撤销」也走这里，确保它弹出的正是对应的快照，
-   * 不会再出现「点了撤销、⌘Z 却回退到同一快照」的重复撤销问题。
-   */
+  /** 精确撤销到某 token：从栈中移除该条及其之后的项（通常就是栈顶），恢复它的前置快照 */
+  const undoToToken = useCallback((token: number | null) => {
+    if (token === null) return;
+    const idx = undoStack.current.findIndex((e) => e.token === token);
+    if (idx < 0) {
+      showToast('该操作已撤销或已被后续操作覆盖');
+      return;
+    }
+    const entries = undoStack.current.slice(idx); // [目标, ..., 最新]，按时间顺序
+    const target = entries[0];
+    // 重做栈存「每步撤销前的状态」：从次新往目标方向，每步的撤销前状态就是后一个 entry 的快照。
+    // 依次压入 entries[1..n].state，最后压入当前最新状态，pop 时即可逐步回到撤销前。
+    const redoAdds: UndoEntry[] = [];
+    for (let i = 1; i < entries.length; i += 1) {
+      redoAdds.push({ state: entries[i].state, label: entries[i].label, token: entries[i].token });
+    }
+    redoAdds.push({ state: storeRef.current.state, label: target.label, token: -1 });
+    redoStack.current = [...redoStack.current, ...redoAdds].slice(-20);
+    undoStack.current = undoStack.current.slice(0, idx);
+    storeRef.current.importData(target.state);
+    showToast(`已撤销：${target.label}`);
+  }, [showToast]);
+
+  /** ⌘Z：撤销栈顶一步 */
   const performUndo = useCallback(() => {
-    const last = undoStack.current.pop();
+    const last = undoStack.current[undoStack.current.length - 1];
     if (!last) {
       showToast('没有可撤销的操作');
       return;
     }
-    redoStack.current = [...redoStack.current, { state: storeRef.current.state, label: last.label }].slice(-20);
-    storeRef.current.importData(last.state);
-    showToast(`已撤销：${last.label}`);
-  }, [showToast]);
+    undoToToken(last.token);
+  }, [showToast, undoToToken]);
 
   const performRedo = useCallback(() => {
     const last = redoStack.current.pop();
@@ -194,10 +249,21 @@ export default function App() {
       showToast('没有可重做的操作');
       return;
     }
-    undoStack.current = [...undoStack.current, { state: storeRef.current.state, label: last.label }].slice(-20);
+    undoStack.current = [
+      ...undoStack.current,
+      { state: storeRef.current.state, label: last.label, token: ++undoTokenSeq.current },
+    ].slice(-20);
     storeRef.current.importData(last.state);
     showToast(`已重做：${last.label}`);
   }, [showToast]);
+
+  /** 带「撤销」的提示：自动绑定到最近一次 pushUndo 的 token，撤销的一定是这条提示对应的操作 */
+  const showUndo = useCallback((msg: string) => {
+    const token = lastUndoToken.current;
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToast({ text: msg, actionLabel: '撤销', action: () => undoToToken(token) });
+    toastTimer.current = window.setTimeout(() => setToast(null), 6000);
+  }, [undoToToken]);
 
 
   /**
@@ -402,6 +468,9 @@ export default function App() {
 
   const groupTree = useMemo(() => buildGroupTree(groups), [groups]);
 
+  /** 分组 → 自身及全部后代 id（一次建图，供计数/筛选/整组操作共用，避免 O(G²)） */
+  const subtreeMap = useMemo(() => buildAllSubtrees(groups), [groups]);
+
   /** 每个分组包含其后代的书签总数（父分组计数覆盖整棵子树） */
   const groupCounts = useMemo(() => {
     const own: Record<string, number> = {};
@@ -409,13 +478,13 @@ export default function App() {
       if (b.groupId) own[b.groupId] = (own[b.groupId] ?? 0) + 1;
     });
     const total: Record<string, number> = {};
-    groups.forEach((g) => {
+    subtreeMap.forEach((ids, gid) => {
       let n = 0;
-      groupSubtreeIds(groups, g.id).forEach((id) => { n += own[id] ?? 0; });
-      total[g.id] = n;
+      ids.forEach((id) => { n += own[id] ?? 0; });
+      total[gid] = n;
     });
     return total;
-  }, [bookmarks, groups]);
+  }, [bookmarks, subtreeMap]);
 
   /** 待删除分组的影响范围（直接 + 间接子分组数、子树内书签数） */
   const pendingDeleteImpact = useMemo(() => {
@@ -426,13 +495,6 @@ export default function App() {
       bookmarkCount: bookmarks.filter((b) => b.groupId && ids.has(b.groupId)).length,
     };
   }, [pendingDeleteGroupId, groups, bookmarks]);
-
-  /** 分组 → 自身及全部后代 id（用于筛选与「整组操作」） */
-  const subtreeMap = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    groups.forEach((g) => m.set(g.id, groupSubtreeIds(groups, g.id)));
-    return m;
-  }, [groups]);
 
   /** 侧栏可见的分组行（按层级展开，折叠的子树整段隐藏） */
   const groupNavRows = useMemo(() => {
@@ -491,25 +553,65 @@ export default function App() {
     [bookmarks],
   );
 
+  /** 回收站数量 */
+  const trashCount = useMemo(() => allBookmarks.filter((b) => b.deletedAt).length, [allBookmarks]);
+
+  /** 归档（下沉本地）数量 */
+  const archivedCount = useMemo(() => allBookmarks.filter((b) => b.archived).length, [allBookmarks]);
+
+  /** 智能文件夹命中数 */
+  const smartFolderCounts = useMemo(() => {
+    const ctx: MatchContext = { groupPathText };
+    const out: Record<string, number> = {};
+    settings.smartFolders.forEach((f) => {
+      out[f.id] = bookmarks.filter((b) => !b.groupId || !lockedGroupIds.has(b.groupId))
+        .filter((b) => matchesSmartFolder(b, f, ctx)).length;
+    });
+    return out;
+  }, [settings.smartFolders, bookmarks, groupPathText, lockedGroupIds]);
+
+  /** 死链角标数量 */
+  const deadLinkCount = settings.healthMonitor.deadIds.filter((id) => allBookmarks.some((b) => b.id === id)).length;
+
+  /** 键盘监听用 ref 读取最新列表，避免每次筛选变化都重绑 window 监听 */
+  const filteredRef = useRef<Bookmark[]>([]);
+
   const filtered = useMemo(() => {
+    // 回收站视图：直接返回软删项，不走常规筛选
+    if (activeGroup === 'trash' && view === 'bookmarks') {
+      return allBookmarks
+        .filter((b) => b.deletedAt)
+        .sort((a, b) => (b.deletedAt ?? 0) - (a.deletedAt ?? 0));
+    }
     const q = deferredQuery.trim().toLowerCase();
-    const subtree = activeGroup !== 'all' && activeGroup !== 'ungrouped'
-      && activeGroup !== 'recent' && activeGroup !== 'recent-added'
-      && activeGroup !== 'read-later'
-      ? subtreeMap.get(activeGroup)
+    const advanced = hasAdvancedSyntax(q);
+    const parsed = advanced ? parseSearchQuery(q) : null;
+    const matchCtx: MatchContext = { groupPathText };
+    // 选择智能文件夹时，用其保存的 query 作为额外过滤
+    const smart = settings.smartFolders.find((f) => f.id === activeGroup);
+    const smartQuery = smart ? parseSearchQuery(smart.query) : null;
+    const subtree = !VIRTUAL_VIEWS.has(activeGroup) && !smart
+      ? subtreeMap.get(activeGroup) ?? null
       : null;
     let items = bookmarks.filter((b) => {
+      // 私密分组未解锁：隐藏其书签
+      if (b.groupId && lockedGroupIds.has(b.groupId)) return false;
       if (activeGroup === 'ungrouped' && b.groupId) return false;
       if (subtree) {
         // 选中父分组时，同时展示所有嵌套子分组里的书签
         if (!b.groupId || !subtree.has(b.groupId)) return false;
       }
       if (activeTag && !b.tags.includes(activeTag)) return false;
+      if (smartQuery && !matchesQuery(b, smartQuery, matchCtx)) return false;
       if (q) {
-        const hay = `${b.title} ${b.url} ${getHost(b.url)} ${b.description} ${b.tags.join(' ')} ${
-          b.groupId ? groupPathText.get(b.groupId) ?? '' : ''
-        }`.toLowerCase();
-        if (!hay.includes(q)) return false;
+        if (parsed && advanced) {
+          if (!matchesQuery(b, parsed, matchCtx)) return false;
+        } else {
+          const hay = `${b.title} ${b.url} ${getHost(b.url)} ${b.description} ${b.tags.join(' ')} ${
+            b.groupId ? groupPathText.get(b.groupId) ?? '' : ''
+          }`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
       }
       return true;
     });
@@ -530,7 +632,8 @@ export default function App() {
     }
     items = sortBookmarks(items, settings.sort);
     return items;
-  }, [bookmarks, deferredQuery, activeGroup, activeTag, settings.sort, subtreeMap, groupPathText]);
+  }, [bookmarks, allBookmarks, deferredQuery, activeGroup, activeTag, settings.sort, settings.smartFolders, subtreeMap, groupPathText, lockedGroupIds, view]);
+  filteredRef.current = filtered;
 
   /* ------------------------ 多选 ------------------------ */
   const isRealGroup = (id: string) => groupById.has(id);
@@ -577,69 +680,78 @@ export default function App() {
       const target = e.target as HTMLElement;
       const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
         || target.isContentEditable;
+      // 自定义快捷键：读取设置里的绑定，缺省回退到内置默认值
+      const bindings = storeRef.current.state.settings.shortcuts ?? {};
+      const hit = (id: string) => {
+        const def = SHORTCUT_ACTIONS.find((a) => a.id === id)?.default;
+        return matchesCombo(e, bindings[id] ?? def);
+      };
       // 快速切换面板打开时，键盘事件全部交给面板自身处理
       if (switcherOpen) return;
-      if (mod && e.key.toLowerCase() === 'k') {
+      if (hit('command')) {
         e.preventDefault();
         setSwitcherOpen(true);
         return;
       }
-      if (mod && !typing && e.shiftKey && e.key.toLowerCase() === 'l') {
+      if (!typing && hit('locate')) {
         e.preventDefault();
         locateBookmark();
         return;
       }
-      if (mod && e.key.toLowerCase() === 'a' && !typing && !panel && view === 'bookmarks') {
+      if (!typing && !panel && view === 'bookmarks' && hit('selectAll')) {
         e.preventDefault();
         selectAll();
         return;
       }
-      if (e.key === '/' && !typing) {
+      if (!typing && hit('search')) {
         e.preventDefault();
         searchRef.current?.focus();
         return;
       }
-      if (mod && e.key.toLowerCase() === 'n') {
+      // 与其它快捷键一致：输入态 / 弹窗打开时不响应，避免在弹窗里叠加新建弹窗
+      const anyDialogOpen = !!panel || createGroupOpen || !!bookmarkDialog
+        || groupSettingsOpen || !!pendingDeleteGroupId || tagPanelOpen || bulkTagOpen;
+      if (!typing && !anyDialogOpen && hit('new')) {
         e.preventDefault();
         openAddDialog();
         return;
       }
-      // 多级撤销 / 重做：⌘Z 回退、⌘⇧Z 或 ⌘Y 重做（输入框内的文本撤销交给原生行为）
-      if (mod && !typing && !panel && view === 'bookmarks') {
-        const key = e.key.toLowerCase();
-        if (key === 'z' && !e.shiftKey) {
+      // 多级撤销 / 重做（输入框内的文本撤销交给原生行为）
+      if (!typing && !panel && view === 'bookmarks') {
+        if (hit('undo')) {
           e.preventDefault();
           performUndo();
           return;
         }
-        if ((key === 'z' && e.shiftKey) || key === 'y') {
+        if (hit('redo') || (mod && e.key.toLowerCase() === 'y')) {
           e.preventDefault();
           performRedo();
           return;
         }
       }
-      // 列表键盘导航（仅书签视图、非输入态、无弹窗时）
-      if (!typing && !panel && view === 'bookmarks' && filtered.length > 0) {
+      // 列表键盘导航（仅书签视图、非输入态、无弹窗时）；列表从 ref 读，避免重绑监听
+      const rows = filteredRef.current;
+      if (!typing && !panel && view === 'bookmarks' && rows.length > 0) {
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
           e.preventDefault();
           const dir = e.key === 'ArrowDown' ? 1 : -1;
-          const idx = filtered.findIndex((b) => b.id === focusedId);
+          const idx = rows.findIndex((b) => b.id === focusedId);
           const nextIdx = idx < 0
-            ? (dir === 1 ? 0 : filtered.length - 1)
-            : Math.min(filtered.length - 1, Math.max(0, idx + dir));
-          setFocusedId(filtered[nextIdx].id);
+            ? (dir === 1 ? 0 : rows.length - 1)
+            : Math.min(rows.length - 1, Math.max(0, idx + dir));
+          setFocusedId(rows[nextIdx].id);
           return;
         }
         if (e.key === 'Enter' && focusedId) {
-          const bm = filtered.find((b) => b.id === focusedId);
+          const bm = rows.find((b) => b.id === focusedId);
           if (bm) {
             e.preventDefault();
             storeRef.current.visitBookmark(bm.id, bm.url);
             return;
           }
         }
-        if (e.key.toLowerCase() === 'x' && !mod) {
-          const bm = filtered.find((b) => b.id === focusedId) ?? filtered[0];
+        if (hit('select')) {
+          const bm = rows.find((b) => b.id === focusedId) ?? rows[0];
           if (bm) {
             e.preventDefault();
             toggleSelect(bm);
@@ -660,7 +772,9 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [panel, query, activeTag, focusedId, filtered, selectMode, selectAll, clearSelection, toggleSelect, view, openAddDialog, locateBookmark, performUndo, performRedo, switcherOpen]);
+  }, [panel, query, activeTag, focusedId, selectMode, selectAll, clearSelection, toggleSelect, view,
+    openAddDialog, locateBookmark, performUndo, performRedo, switcherOpen,
+    createGroupOpen, bookmarkDialog, groupSettingsOpen, pendingDeleteGroupId, tagPanelOpen, bulkTagOpen]);
 
   // 键盘焦点 / 定位命中的卡片滚到列表中央。列表受 useDeferredValue 影响可能晚一帧才刷新，
   // 因此逐帧重试直到卡片出现；直接设置滚动容器位置，不依赖浏览器对 scrollIntoView 的行为差异。
@@ -687,6 +801,12 @@ export default function App() {
     frame = requestAnimationFrame(center);
     return () => cancelAnimationFrame(frame);
   }, [focusedId, locatedId, locateSeq]);
+
+  // 卸载时清理定时器，避免延时回调在组件销毁后仍触发 setState
+  useEffect(() => () => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    if (locateTimer.current) window.clearTimeout(locateTimer.current);
+  }, []);
 
   // 同步失败：给一条带「重试」的提示（徽章在窄面板里只剩一个小点，容易被忽略）
   const syncErrShown = useRef(false);
@@ -716,6 +836,21 @@ export default function App() {
       storeRef.current.restoreConflict();
     });
   }, [store.conflictBackup, showAction]);
+
+  // 死链巡检定时器到点：提示用户执行检测（真正检测在前端进行）
+  const healthDueShown = useRef(false);
+  useEffect(() => {
+    if (healthDueShown.current || !store.ready) return;
+    healthDueShown.current = true;
+    chrome.storage.local.get('mn:health-due').then((obj) => {
+      if (obj['mn:health-due']) {
+        chrome.storage.local.remove('mn:health-due').catch(() => {});
+        showAction('死链巡检时间到了', '立即检测', () => {
+          setSettingsOpen(true);
+        });
+      }
+    }).catch(() => {});
+  }, [store.ready, showAction]);
 
   /* -------------------------- 操作 -------------------------- */
   const refresh = () => {
@@ -763,12 +898,17 @@ export default function App() {
   /** 整组移动：把分组挂到另一个分组下（null = 移到顶层） */
   const handleMoveGroup = (id: string, parentId: string | null) => {
     const name = groupById.get(id)?.name ?? '分组';
+    // 先采样「移动前」快照：moveGroup 内部会同步提交 stateRef，
+    // 若在其后才 pushUndo，采样到的就是移动后状态，撤销会失效。
+    const token = pushUndo(parentId ? `移动分组「${name}」` : `把「${name}」移回顶层`);
     const ok = store.moveGroup(id, parentId);
     if (!ok) {
+      // 未实际移动：回滚这次压栈，避免留下一步空撤销
+      undoStack.current = undoStack.current.filter((e) => e.token !== token);
+      lastUndoToken.current = undoStack.current[undoStack.current.length - 1]?.token ?? null;
       showToast('不能把分组移动到它自己或它的子分组里');
       return;
     }
-    pushUndo(parentId ? `移动分组「${name}」` : `把「${name}」移回顶层`);
     const target = parentId ? groupById.get(parentId)?.name : '';
     showToast(target ? `已将「${name}」移动到「${target}」` : `已将「${name}」移到顶层`);
   };
@@ -818,7 +958,7 @@ export default function App() {
     if (activeGroup === id) setActiveGroup('all');
     if (groupSettingsOpen) setGroupSettingsOpen(false);
     setPendingDeleteGroupId(null);
-    showUndo(`已删除「${name}」，书签与子分组已上移一级`, performUndo);
+    showUndo(`已删除「${name}」，书签与子分组已上移一级`);
   };
 
   /* ------------------------ 批量操作 ------------------------ */
@@ -829,7 +969,7 @@ export default function App() {
     pushUndo(`移动 ${ids.length} 个书签到「${name}」`);
     store.moveBookmarksToGroup(ids, groupId);
     clearSelection();
-    showUndo(`已将 ${ids.length} 个书签移动到「${name}」`, performUndo);
+    showUndo(`已将 ${ids.length} 个书签移动到「${name}」`);
   };
 
   const handleBulkTag = (tag: string) => {
@@ -839,13 +979,13 @@ export default function App() {
     store.addTagToBookmarks(Array.from(selectedIds), t);
     setBulkTag('');
     setBulkTagOpen(false);
-    showUndo(`已给 ${selectedIds.size} 个书签加上「${t}」`, performUndo);
+    showUndo(`已给 ${selectedIds.size} 个书签加上「${t}」`);
   };
 
   const handleDeleteBookmark = (bm: Bookmark, label?: string) => {
     pushUndo(`删除「${bm.title}」`);
     store.deleteBookmark(bm.id);
-    showUndo(label ?? `已删除「${bm.title}」`, performUndo);
+    showUndo(label ?? `已把「${bm.title}」移入回收站`);
   };
 
   const handleBulkDelete = () => {
@@ -854,7 +994,104 @@ export default function App() {
     pushUndo(`删除 ${ids.length} 个书签`);
     store.deleteBookmarks(ids);
     clearSelection();
-    showUndo(`已删除 ${ids.length} 个书签`, performUndo);
+    showUndo(`已把 ${ids.length} 个书签移入回收站`);
+  };
+
+  /* ------------------------ 回收站 ------------------------ */
+  const handleRestore = (ids: string[]) => {
+    if (!ids.length) return;
+    pushUndo(`还原 ${ids.length} 个书签`);
+    store.restoreBookmarks(ids);
+    showUndo(`已还原 ${ids.length} 个书签`);
+  };
+  const handlePurge = (ids: string[]) => {
+    if (!ids.length) return;
+    pushUndo(`彻底删除 ${ids.length} 个书签`);
+    store.purgeBookmarks(ids);
+    showUndo(`已彻底删除 ${ids.length} 个书签`);
+  };
+  const handleEmptyTrash = () => {
+    pushUndo('清空回收站');
+    store.emptyTrash();
+    showUndo('回收站已清空');
+  };
+
+  /* ------------------------ 批量编辑 ------------------------ */
+  const handleBatchEdit = () => {
+    if (selectedIds.size === 0) return;
+    setBatchEditOpen(true);
+  };
+  const applyBatchDesc = (value: string) => {
+    pushUndo(`批量改备注（${selectedIds.size} 个）`);
+    store.bulkSetDescription(Array.from(selectedIds), value);
+    clearSelection();
+    showUndo(`已修改 ${selectedIds.size} 个书签的备注`);
+  };
+  const applyBatchUrl = (from: string, to: string) => {
+    pushUndo(`批量替换网址（${selectedIds.size} 个）`);
+    store.bulkReplaceUrl(Array.from(selectedIds), from, to);
+    clearSelection();
+    showUndo(`已替换 ${selectedIds.size} 个书签的网址前缀`);
+  };
+  const applyBatchRename = (find: string, replace: string, prefix: string, suffix: string) => {
+    pushUndo(`批量重命名（${selectedIds.size} 个）`);
+    store.bulkRename(Array.from(selectedIds), find, replace, prefix, suffix);
+    clearSelection();
+    showUndo(`已重命名 ${selectedIds.size} 个书签`);
+  };
+
+  /* ------------------------ 智能文件夹 / 设置 / 洞察 ------------------------ */
+  const handleSaveSmartFolders = (folders: typeof settings.smartFolders) => {
+    pushUndo('修改智能文件夹');
+    store.setSetting('smartFolders', folders);
+    showUndo('智能文件夹已更新');
+  };
+  const handleSettingsPatch = (patch: Partial<typeof settings>) => {
+    (Object.keys(patch) as (keyof typeof settings)[]).forEach((key) => {
+      // 逐个写入，沿用 setSetting 的持久化与去重逻辑
+      store.setSetting(key, patch[key] as never);
+    });
+  };
+  const handleRunArchive = (days: number) => {
+    const n = store.archiveColdBookmarks(days);
+    showToast(n ? `已归档 ${n} 个冷书签到本地（不占同步配额）` : '没有符合条件的冷书签');
+  };
+  const handleUnarchiveAll = () => {
+    const n = store.unarchiveAll();
+    showToast(n ? `已取回 ${n} 个归档书签` : '没有归档书签');
+  };
+  const handleRunHealthCheck = () => {
+    showToast('正在检测死链，请稍候…');
+    const targets = allBookmarks.filter((b) => !b.deletedAt && /^https?:\/\//i.test(b.url));
+    void checkLinks(targets, () => {}).then((results) => {
+      const deadIds = results.filter((r) => !r.ok).map((r) => r.id);
+      store.setSetting('healthMonitor', { ...settings.healthMonitor, lastRunAt: Date.now(), deadIds });
+      showToast(`检测完成：${deadIds.length} 个死链（共检测 ${targets.length} 个）`);
+    });
+  };
+  const handleSetPin = (hash: string | undefined) => {
+    pushUndo('修改 PIN');
+    store.setSetting('pinHash', hash);
+    if (!hash) setUnlockedGroups(new Set());
+    showUndo(hash ? 'PIN 已设置' : 'PIN 已取消');
+  };
+
+  /** 点击分组：若受 PIN 保护且未解锁，先弹 PIN 对话框 */
+  const selectGroup = (gid: string) => {
+    if (lockedGroupIds.has(gid)) {
+      setPinTarget(gid);
+      return;
+    }
+    setView('bookmarks');
+    setActiveGroup(gid);
+    setActiveTag(null);
+  };
+
+  const handleShareGroup = (gid: string) => {
+    const html = exportGroupHtml(gid, allBookmarks, groups);
+    const name = groupById.get(gid)?.name ?? '分组';
+    downloadFile(html, `marknest-share-${name}.html`, 'text/html;charset=utf-8');
+    showToast('已导出只读分享页 HTML');
   };
 
   /* ------------------------ 侧栏宽度拖拽 ------------------------ */
@@ -863,16 +1100,18 @@ export default function App() {
     const aside = (e.currentTarget as HTMLElement).previousElementSibling as HTMLElement | null;
     const startX = e.clientX;
     const startW = aside?.getBoundingClientRect().width ?? 150;
+    let latest = startW;
     const onMove = (ev: MouseEvent) => {
       const max = Math.max(200, Math.min(360, window.innerWidth - 260));
-      const next = Math.round(Math.min(max, Math.max(130, startW + ev.clientX - startX)));
-      setSidebarWidth(next);
-      localStorage.setItem('mn:sidebarWidth', String(next));
+      latest = Math.round(Math.min(max, Math.max(130, startW + ev.clientX - startX)));
+      setSidebarWidth(latest);
+      // 只在拖动结束时落盘：mousemove 每次写 localStorage 是同步 I/O，会拖慢拖拽
     };
     const onUp = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       document.body.classList.remove('is-resizing');
+      localStorage.setItem('mn:sidebarWidth', String(latest));
     };
     document.body.classList.add('is-resizing');
     window.addEventListener('mousemove', onMove);
@@ -978,8 +1217,12 @@ export default function App() {
    * 同名同层分组会复用已存在的分组，重复导入不会堆出多套树。
    */
   const handleImportBrowser = async () => {
-    const existing = new Set(bookmarks.map((b) => b.url.replace(/\/+$/, '')));
+    // 先等书签树读完，再基于「此刻」的最新内存态重算去重集合与分组池。
+    // 若用调用时刻闭包里的旧快照，await 期间收到的远端同步会被整份覆盖（P0 数据丢失）。
     const tree = await readBrowserBookmarks();
+    const latest = storeRef.current.state;
+    const existing = new Set(latest.bookmarks.map((b) => b.url.replace(/\/+$/, '')));
+    const knownBrowserIds = new Set(latest.bookmarks.map((b) => b.browserId).filter(Boolean));
     const now = Date.now();
     const newGroups: Group[] = [];
     const newItems: Bookmark[] = [];
@@ -989,7 +1232,9 @@ export default function App() {
 
     const keyOf = (parentId: string | null, name: string) => `${parentId ?? 'root'}|${name}`;
     const pool = new Map<string, string>();
-    groups.forEach((g) => pool.set(keyOf(g.parentId, g.name), g.id));
+    latest.groups.forEach((g) => pool.set(keyOf(g.parentId, g.name), g.id));
+    /** 浏览器文件夹 id → 扩展分组 id（供增量同步识别同源书签） */
+    const browserFolderMap: Record<string, string> = { ...latest.settings.browserSync.folderMap };
 
     // Chrome 的固定根容器（书签栏 / 其他书签 / 移动设备书签）只是容器，
     // 不该变成分组，其子项按顶层处理。
@@ -1010,15 +1255,17 @@ export default function App() {
             continue;
           }
           const norm = node.url.replace(/\/+$/, '');
-          if (existing.has(norm)) {
+          // 已按 browserId 同步过，或网址重复：跳过
+          if (knownBrowserIds.has(node.id) || existing.has(norm)) {
             skipped += 1;
             continue;
           }
           existing.add(norm);
+          knownBrowserIds.add(node.id);
           newItems.push({
             id: crypto.randomUUID(),
             title: node.title || getHost(node.url),
-            url: node.url,
+            url: settings.stripTracking ? stripTrackingParams(node.url) : node.url,
             description: '',
             groupId: parentGroupId,
             tags: [],
@@ -1029,6 +1276,7 @@ export default function App() {
             visits: 0,
             pinned: false,
             order: now + imported,
+            browserId: node.id,
           });
           imported += 1;
           continue;
@@ -1055,6 +1303,7 @@ export default function App() {
           pool.set(key, g.id);
           gid = g.id;
         }
+        browserFolderMap[node.id] = gid;
         if (node.children) walk(node.children, gid);
       }
     };
@@ -1062,10 +1311,17 @@ export default function App() {
     tree.forEach((root) => walk(root.children ?? [], null));
 
     if (newItems.length || newGroups.length) {
+      // 再次从 storeRef 取最新态：walk 是同步的但 handleImportBrowser 是异步入口，
+      // 用调用者的旧闭包会丢掉期间到达的任何改动。
+      const base = storeRef.current.state;
       store.importData({
-        ...store.state,
-        groups: [...store.state.groups, ...newGroups],
-        bookmarks: [...store.state.bookmarks, ...newItems],
+        ...base,
+        groups: [...base.groups, ...newGroups],
+        bookmarks: [...base.bookmarks, ...newItems],
+        settings: {
+          ...base.settings,
+          browserSync: { ...base.settings.browserSync, folderMap: browserFolderMap, lastSyncedAt: Date.now() },
+        },
       });
       // 导入完成直接把用户带到「最近添加」，让人看到东西落在哪里
       setPanel(null);
@@ -1134,6 +1390,17 @@ export default function App() {
         </div>
         <SyncBadge sync={store.sync} onRefresh={refresh} />
         <div className="topbar__actions">
+          {deadLinkCount > 0 && (
+            <button
+              className="icon-btn topbar__alert"
+              onClick={() => setInsightsOpen(true)}
+              title={`检测到 ${deadLinkCount} 个死链`}
+              aria-label={`检测到 ${deadLinkCount} 个死链`}
+            >
+              <IconAlert size={17} />
+              <span className="topbar__badge">{deadLinkCount > 99 ? '99+' : deadLinkCount}</span>
+            </button>
+          )}
           <button
             className="icon-btn"
             onClick={() => locateBookmark()}
@@ -1191,7 +1458,14 @@ export default function App() {
           className="searchbar__input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="搜索标题、网址、标签或备注…"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && query.trim()) {
+              const q = query.trim();
+              const recent = [q, ...settings.searchHistory.map((h) => h.query).filter((x) => x !== q)].slice(0, 20);
+              store.setSetting('searchHistory', recent.map((text, i) => ({ query: text, at: i === 0 ? Date.now() : settings.searchHistory.find((h) => h.query === text)?.at ?? Date.now() })));
+            }
+          }}
+          placeholder="搜索标题、网址、标签或备注…（支持 tag: domain: group: 未读）"
           aria-label="搜索书签"
         />
         {query ? (
@@ -1200,6 +1474,17 @@ export default function App() {
           </button>
         ) : (
           <kbd className="kbd">/</kbd>
+        )}
+        {!query && settings.searchHistory.length > 0 && (
+          <div className="search-history">
+            <span>最近搜索：</span>
+            {settings.searchHistory.slice(0, 6).map((h) => (
+              <button key={h.query} className="chip" onClick={() => setQuery(h.query)} title={new Date(h.at).toLocaleString('zh-CN')}>
+                {h.query}
+              </button>
+            ))}
+            <button className="search-history__clear" onClick={() => store.setSetting('searchHistory', [])}>清除</button>
+          </div>
         )}
       </div>
 
@@ -1256,6 +1541,15 @@ export default function App() {
               <IconReadingList size={15} />
               <span>阅读清单</span>
               <em>{formatCount(unreadCount)}</em>
+            </button>
+            <button
+              className={`nav-item ${view === 'bookmarks' && activeGroup === 'trash' ? 'nav-item--active' : ''}`}
+              onClick={() => { setView('bookmarks'); setActiveGroup('trash'); setActiveTag(null); setQuery(''); }}
+              title="已删除的书签，可还原或彻底清除"
+            >
+              <IconTrashBin size={15} />
+              <span>回收站</span>
+              <em>{formatCount(trashCount)}</em>
             </button>
           </div>
 
@@ -1428,10 +1722,14 @@ export default function App() {
                     className={`nav-item ${view === 'bookmarks' && activeGroup === g.id ? 'nav-item--active' : ''}`}
                     /* 统一 18px 左内边距：有无折叠箭头，圆点都在同一竖线上 */
                     style={{ paddingLeft: 18 }}
-                    onClick={() => { setView('bookmarks'); setActiveGroup(g.id); setActiveTag(null); }}
+                    onClick={() => selectGroup(g.id)}
                     title={depth ? groupPath(groups, g.id).map((p) => p.name).join(' / ') : g.name}
                   >
-                    <IconFolder size={15} style={{ color: g.color, flexShrink: 0 }} />
+                    {lockedGroupIds.has(g.id) ? (
+                      <IconLock size={14} style={{ color: g.color, flexShrink: 0 }} />
+                    ) : (
+                      <IconFolder size={15} style={{ color: g.color, flexShrink: 0 }} />
+                    )}
                     <span className="nav-item__name">{g.name}</span>
                     <em>{formatCount(groupCounts[g.id] ?? 0)}</em>
                   </button>
@@ -1447,6 +1745,35 @@ export default function App() {
               );
             })}
           </div>
+
+          {settings.smartFolders.length > 0 && (
+            <div className="sidebar__section">
+              <div className="sidebar__label-row">
+                <p className="sidebar__label">智能文件夹</p>
+                <button
+                  className="sidebar__add sidebar__add--text"
+                  onClick={() => setSmartFoldersOpen(true)}
+                  title="管理智能文件夹"
+                  aria-label="管理智能文件夹"
+                >
+                  <IconWand size={11} />
+                  <span>管理</span>
+                </button>
+              </div>
+              {settings.smartFolders.map((f) => (
+                <button
+                  key={f.id}
+                  className={`nav-item ${view === 'bookmarks' && activeGroup === f.id ? 'nav-item--active' : ''}`}
+                  onClick={() => { setView('bookmarks'); setActiveGroup(f.id); setActiveTag(null); }}
+                  title={`智能查询：${f.query}`}
+                >
+                  <IconSmartFolder size={15} style={{ color: f.color, flexShrink: 0 }} />
+                  <span className="nav-item__name">{f.name}</span>
+                  <em>{formatCount(smartFolderCounts[f.id] ?? 0)}</em>
+                </button>
+              ))}
+            </div>
+          )}
 
           {allTags.length > 0 && (
             <div className="sidebar__section">
@@ -1516,7 +1843,10 @@ export default function App() {
                             ? '最近添加'
                             : activeGroup === 'read-later'
                               ? '阅读清单'
-                              : groupById.get(activeGroup)?.name ?? '书签'}
+                              : activeGroup === 'trash'
+                                ? '回收站'
+                                : settings.smartFolders.find((f) => f.id === activeGroup)?.name
+                                  ?? groupById.get(activeGroup)?.name ?? '书签'}
               </h1>
               <span>
                 {view === 'tabs'
@@ -1610,6 +1940,14 @@ export default function App() {
               >
                 <IconTag size={13} /> 加标签
               </button>
+              <button
+                className="bulkbar__btn"
+                disabled={selectedIds.size === 0}
+                onClick={handleBatchEdit}
+                title="批量改备注 / 替换网址 / 重命名"
+              >
+                <IconEdit size={13} /> 编辑
+              </button>
               {bulkTagOpen && (
                 <span className="bulkbar__tag">
                   <input
@@ -1650,6 +1988,36 @@ export default function App() {
               onLocate={(url, title) => locateBookmark(url, title)}
               onCount={setTabCount}
             />
+          ) : activeGroup === 'trash' ? (
+            <div className="bookmark-list">
+              <div className="trash-toolbar">
+                <span>回收站中有 {filtered.length} 个书签</span>
+                <button
+                  className="btn btn--danger btn--sm"
+                  disabled={filtered.length === 0}
+                  onClick={handleEmptyTrash}
+                >
+                  <IconTrashBin size={13} /> 清空回收站
+                </button>
+              </div>
+              {filtered.length === 0 ? (
+                <p className="trash-empty">回收站是空的。删除的书签会先放到这里，可随时还原。</p>
+              ) : filtered.map((bm) => (
+                <div key={bm.id} className="trash-row">
+                  <div className="trash-row__body">
+                    <strong>{bm.title}</strong>
+                    <span>{bm.url}</span>
+                    <small>删除于 {new Date(bm.deletedAt ?? 0).toLocaleString('zh-CN')}</small>
+                  </div>
+                  <button className="btn btn--ghost btn--sm" onClick={() => handleRestore([bm.id])}>
+                    <IconRestore size={13} /> 还原
+                  </button>
+                  <button className="btn btn--danger btn--sm" onClick={() => handlePurge([bm.id])}>
+                    彻底删除
+                  </button>
+                </div>
+              ))}
+            </div>
           ) : (
           <div className={`bookmark-list ${settings.view === 'grid' ? 'bookmark-list--grid' : ''}`}>
             {filtered.length === 0 ? (
@@ -1680,7 +2048,7 @@ export default function App() {
                   groups={groups}
                   allBookmarks={bookmarks}
                   view={settings.view}
-                  isDragging={dragId.current === bm.id}
+                  isDragging={draggingId === bm.id}
                   selectMode={selectMode}
                   selected={selectedIds.has(bm.id)}
                   focused={focusedId === bm.id}
@@ -1702,16 +2070,18 @@ export default function App() {
                     });
                   }}
                   onTagClick={(t) => setActiveTag(t)}
-                  onDragStart={(id) => { dragId.current = id; setFocusedId(id); }}
+                  onDragStart={(id) => { dragId.current = id; setDraggingId(id); setFocusedId(id); }}
                   onDragOver={() => {}}
                   onDrop={(targetId) => {
                     if (dragId.current && dragId.current !== targetId) {
+                      pushUndo('调整书签顺序');
                       store.moveBookmark(dragId.current, targetId, bmGroupForDrop(targetId));
-                      showToast('已调整顺序');
+                      showToast('已调整顺序（可撤销）');
                     }
                     dragId.current = null;
+                    setDraggingId(null);
                   }}
-                  onDragEnd={() => { dragId.current = null; }}
+                  onDragEnd={() => { dragId.current = null; setDraggingId(null); }}
                 />
               ))
             )}
@@ -1721,6 +2091,16 @@ export default function App() {
           <footer className="bottombar">
             <button className="bottom-btn" onClick={() => setPanel('groups')} title="管理分组">
               <IconFolder size={15} /> <span className="bottom-btn__label">分组</span>
+            </button>
+            <button className="bottom-btn" onClick={() => setSettingsOpen(true)} title="设置：自动标签、浏览器同步、死链巡检、分层存储、快捷键、私密">
+              <IconSliders size={15} /> <span className="bottom-btn__label">设置</span>
+            </button>
+            <button className="bottom-btn" onClick={() => setInsightsOpen(true)} title="数据洞察">
+              <IconChart size={15} /> <span className="bottom-btn__label">洞察</span>
+            </button>
+            <button className="bottom-btn" onClick={() => setRecycleOpen(true)} title="回收站">
+              <IconTrashBin size={15} /> <span className="bottom-btn__label">回收站</span>
+              {trashCount > 0 && <em className="bottom-btn__badge">{formatCount(trashCount)}</em>}
             </button>
             <button className="bottom-btn" onClick={() => setPanel('data')} title="数据与整理">
               <IconArchive size={15} /> <span className="bottom-btn__label">数据</span>
@@ -1773,20 +2153,20 @@ export default function App() {
           if (activeTag && group.members.some((m) => m.tag === activeTag)) {
             setActiveTag(group.canonical);
           }
-          showUndo(`已把 ${group.members.length - 1} 个重复写法合并为「${group.canonical}」`, performUndo);
+          showUndo(`已把 ${group.members.length - 1} 个重复写法合并为「${group.canonical}」`);
         }}
         onClose={() => setTagPanelOpen(false)}
         onRename={(from, to) => {
           pushUndo(`重命名标签「${from}」为「${to}」`);
           store.renameTag(from, to);
           if (activeTag === from) setActiveTag(to.trim());
-          showUndo(`已把标签「${from}」改为「${to}」`, performUndo);
+          showUndo(`已把标签「${from}」改为「${to}」`);
         }}
         onDelete={(tag) => {
           pushUndo(`删除标签「${tag}」`);
           store.deleteTag(tag);
           if (activeTag === tag) setActiveTag(null);
-          showUndo(`已删除标签「${tag}」`, performUndo);
+          showUndo(`已删除标签「${tag}」`);
         }}
       />
       {bulkMoveAnchor && (
@@ -1813,23 +2193,30 @@ export default function App() {
         state={store.state}
         duplicates={duplicates}
         onClose={() => setPanel(null)}
-        onImportJson={(data: AppState) => store.importData(data)}
+        onImportJson={(data: AppState) => {
+          pushUndo('导入 JSON（覆盖）');
+          store.importData(data);
+          showUndo('已导入 JSON，原数据可撤销恢复');
+        }}
         onImportHtml={(items: Bookmark[]) => {
+          pushUndo(`导入 HTML（新增 ${items.length} 条）`);
           store.importData({ ...store.state, bookmarks: [...store.state.bookmarks, ...items] });
+          showToast(`已导入 ${items.length} 个书签，可撤销`);
         }}
         onRemoveDuplicates={(ids) => {
+          pushUndo(`清理 ${ids.length} 个重复书签`);
           const idSet = new Set(ids);
           store.importData({
             ...store.state,
             bookmarks: store.state.bookmarks.filter((b) => !idSet.has(b.id)),
           });
-          showToast(`已清理 ${ids.length} 个重复书签`);
+          showUndo(`已清理 ${ids.length} 个重复书签`);
         }}
         onImportBrowser={handleImportBrowser}
         onDeleteBookmarks={(ids) => {
           pushUndo(`删除 ${ids.length} 个死链书签`);
           store.deleteBookmarks(ids);
-          showUndo(`已删除 ${ids.length} 个书签`, performUndo);
+          showUndo(`已删除 ${ids.length} 个书签`);
         }}
         onApplyTemplate={(names) => {
           const existing = new Set(store.state.groups.map((g) => g.name));
@@ -1854,7 +2241,12 @@ export default function App() {
           onClose={() => setSortAnchor(null)}
         />
       )}
-      <ShortcutsDialog open={panel === 'shortcuts'} onClose={() => setPanel(null)} />
+      <ShortcutsDialog
+        open={panel === 'shortcuts'}
+        onClose={() => setPanel(null)}
+        bindings={settings.shortcuts}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <GroupSettingsDialog
         group={groupSettingsOpen ? groupById.get(activeGroup) ?? null : null}
         groups={groups}
@@ -1863,13 +2255,15 @@ export default function App() {
         onSave={(patch) => {
           const g = groupById.get(activeGroup);
           if (!g) return;
-          pushUndo(patch.name ? `重命名分组「${g.name}」` : `更改分组「${g.name}」颜色`);
+          pushUndo(`更新分组「${g.name}」设置`);
           store.updateGroup(g.id, patch);
-          showToast('分组已更新');
+          showToast(patch.private !== undefined ? (patch.private ? '已设为私密分组' : '已取消私密') : '分组已更新');
         }}
         onDelete={requestDeleteGroup}
         onCreateSub={(parentId) => requestCreateGroup(undefined, parentId)}
         onMove={handleMoveGroup}
+        hasPin={Boolean(settings.pinHash)}
+        onShare={handleShareGroup}
       />
       <QuickSwitcher
         open={switcherOpen}
@@ -1896,6 +2290,54 @@ export default function App() {
           setCreateGroupOpen(false);
           setCreateParentId(null);
           groupCreatedHandler.current = null;
+        }}
+      />
+
+      {/* 新功能弹窗 */}
+      <RecycleBinDialog
+        open={recycleOpen}
+        bookmarks={allBookmarks}
+        onClose={() => setRecycleOpen(false)}
+        onRestore={handleRestore}
+        onPurge={handlePurge}
+        onEmpty={handleEmptyTrash}
+      />
+      <SmartFoldersDialog
+        open={smartFoldersOpen}
+        folders={settings.smartFolders}
+        counts={smartFolderCounts}
+        onClose={() => setSmartFoldersOpen(false)}
+        onSave={handleSaveSmartFolders}
+      />
+      <InsightsDialog open={insightsOpen} bookmarks={allBookmarks} onClose={() => setInsightsOpen(false)} />
+      <BatchEditDialog
+        open={batchEditOpen}
+        count={selectedIds.size}
+        onClose={() => setBatchEditOpen(false)}
+        onSetDescription={applyBatchDesc}
+        onReplaceUrl={applyBatchUrl}
+        onRename={applyBatchRename}
+      />
+      <SettingsDialog
+        open={settingsOpen}
+        settings={settings}
+        archivedCount={archivedCount}
+        onClose={() => setSettingsOpen(false)}
+        onPatch={handleSettingsPatch}
+        onRunArchive={handleRunArchive}
+        onUnarchiveAll={handleUnarchiveAll}
+        onRunHealthCheck={handleRunHealthCheck}
+        onSetPin={handleSetPin}
+      />
+      <PinDialog
+        open={pinTarget !== null}
+        hash={settings.pinHash}
+        groupName={pinTarget ? groupById.get(pinTarget)?.name ?? '分组' : ''}
+        onClose={() => setPinTarget(null)}
+        onUnlocked={() => {
+          // 单一 PIN：解锁后本会话内所有私密分组均可查看
+          setUnlockedGroups(new Set(allGroups.filter((g) => g.private).map((g) => g.id)));
+          setPinTarget(null);
         }}
       />
 

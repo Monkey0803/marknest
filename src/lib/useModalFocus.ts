@@ -18,15 +18,23 @@ const FOCUSABLE = [
 const modalStack: HTMLElement[] = [];
 
 /**
- * 为 aria-modal 弹窗补齐三件事：
+ * 为 aria-modal 弹窗补齐四件事：
  * 1. 打开后确保焦点落在弹窗内（尊重 autoFocus / 组件自身的聚焦逻辑）；
  * 2. Tab / Shift+Tab 在弹窗内循环，不会跑到背后的界面；
- * 3. 关闭后把焦点还给打开它的那个元素。
+ * 3. Esc 关闭——只有栈顶弹窗响应，且阻止事件继续冒泡到主界面的全局快捷键；
+ * 4. 关闭后把焦点还给打开它的那个元素。
  *
  * 必须在组件的 `if (!open) return null` 之前调用（保持 hooks 调用顺序稳定）。
  */
-export function useModalFocus(active: boolean, containerRef: RefObject<HTMLElement>): void {
+export function useModalFocus(
+  active: boolean,
+  containerRef: RefObject<HTMLElement>,
+  onEscape?: () => void,
+): void {
   const returnFocus = useRef<HTMLElement | null>(null);
+  // 用 ref 持有回调，避免调用方传入内联函数时导致 effect 反复重绑
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
 
   useEffect(() => {
     if (!active) return;
@@ -47,10 +55,23 @@ export function useModalFocus(active: boolean, containerRef: RefObject<HTMLEleme
     });
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab' || modalStack[modalStack.length - 1] !== container) return;
+      if (modalStack[modalStack.length - 1] !== container) return;
+      // Esc：仅栈顶弹窗关闭，并阻断冒泡，避免同时触发主界面的「清除筛选」等快捷键
+      if (e.key === 'Escape' && onEscapeRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        onEscapeRef.current();
+        return;
+      }
+      if (e.key !== 'Tab') return;
       const items = Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE))
-        // 排除隐藏元素（如 hover 才显示的操作栏）
-        .filter((el) => el.getClientRects().length > 0 || el === document.activeElement);
+        // 排除隐藏元素（hover 才显示的操作栏、visibility:hidden / display:none）
+        .filter((el) => {
+          if (el === document.activeElement) return true;
+          if (el.getClientRects().length === 0) return false;
+          const style = getComputedStyle(el);
+          return style.visibility !== 'hidden' && style.display !== 'none';
+        });
       if (items.length === 0) {
         e.preventDefault();
         container.focus();

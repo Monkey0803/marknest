@@ -289,3 +289,63 @@ export const IconLocate = ({ size = 18, ...p }: IconProps) => (
     <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
   </svg>
 );
+
+/** 回收站 */
+export const IconTrashBin = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M3 6h18M8 6V4h8v2M5 6l1 14h12l1-14" />
+    <path d="M10 10v6M14 10v6" />
+  </svg>
+);
+
+/** 还原（回收站恢复） */
+export const IconRestore = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7M3 4v5h5" />
+  </svg>
+);
+
+/** 智能文件夹：带星标的文件夹 */
+export const IconSmartFolder = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+    <path d="m12 12 0.8 1.8 1.9.2-1.4 1.3.4 1.9-1.7-.9-1.7.9.4-1.9L9.3 14l1.9-.2z" />
+  </svg>
+);
+
+/** 数据洞察：柱状图 */
+export const IconChart = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+  </svg>
+);
+
+/** 锁 */
+export const IconLock = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <rect x="4" y="10" width="16" height="11" rx="2" />
+    <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+  </svg>
+);
+
+/** 设置滑块 */
+export const IconSliders = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4" />
+    <circle cx="16" cy="6" r="2" /><circle cx="8" cy="12" r="2" /><circle cx="14" cy="18" r="2" />
+  </svg>
+);
+
+/** 标签规则（自动打标签） */
+export const IconWand = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="m3 21 12-12M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1zM19 13l0.6 1.6L21 15l-1.4.4L19 17l-.6-1.6L17 15l1.4-.4z" />
+  </svg>
+);
+
+/** 编辑/批量编辑 */
+export const IconEdit = ({ size = 18, ...p }: IconProps) => (
+  <svg {...base(size)} {...p}>
+    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+  </svg>
+);

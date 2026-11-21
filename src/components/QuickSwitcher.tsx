@@ -37,7 +37,7 @@ export default function QuickSwitcher({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const modalRef = React.useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   React.useEffect(() => {
     if (open) {
@@ -79,8 +79,11 @@ export default function QuickSwitcher({
     return { rows: out.slice(0, 14), totalMatches: total };
   }, [q, commands, groups, bookmarks]);
 
-  // 输入变化后光标回到第一项
+  // 输入变化后光标回到第一项；结果数量变化（如零结果）时把索引夹回合法范围
   React.useEffect(() => setIdx(0), [q]);
+  React.useEffect(() => {
+    setIdx((i) => (rows.length === 0 ? 0 : Math.min(i, rows.length - 1)));
+  }, [rows.length]);
 
   // 当前选中项滚入可视区
   React.useEffect(() => {
@@ -109,6 +112,19 @@ export default function QuickSwitcher({
         aria-modal="true"
         aria-label="快速切换"
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // 绑在容器上：焦点在输入框或结果行时都能用方向键/回车
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setIdx((i) => (rows.length ? Math.min(rows.length - 1, i + 1) : 0));
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setIdx((i) => (rows.length ? Math.max(0, i - 1) : 0));
+          } else if (e.key === 'Enter') {
+            e.preventDefault();
+            runRow(rows[idx]);
+          }
+        }}
       >
         <div className="modal__head modal__head--flush">
           <IconSearch size={16} className="switcher__icon" />
@@ -117,12 +133,6 @@ export default function QuickSwitcher({
             className="switcher__input"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown') { e.preventDefault(); setIdx((i) => Math.min(rows.length - 1, i + 1)); }
-              else if (e.key === 'ArrowUp') { e.preventDefault(); setIdx((i) => Math.max(0, i - 1)); }
-              else if (e.key === 'Enter') { e.preventDefault(); runRow(rows[idx]); }
-              else if (e.key === 'Escape') { e.preventDefault(); onClose(); }
-            }}
             placeholder="搜索书签、分组或命令…"
             aria-label="搜索书签、分组或命令"
             autoComplete="off"

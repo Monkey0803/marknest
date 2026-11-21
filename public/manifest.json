@@ -8,10 +8,10 @@
     "storage",
     "tabs",
     "windows",
-    "activeTab",
     "contextMenus",
     "sidePanel",
-    "bookmarks"
+    "bookmarks",
+    "alarms"
   ],
   "action": {
     "default_title": "打开 Marknest 书签侧边栏",

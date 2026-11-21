@@ -34,6 +34,8 @@ const GR_PREFIX = `${PREFIX}gr:`;
 const DATA_PREFIX = `${PREFIX}data:`;
 const BG_PREFIX = `${PREFIX}bg:`;
 const GRP_PREFIX = `${PREFIX}grp:`;
+/** 右键菜单收藏的待处理队列：service worker 写入，前端消费后清空，避免在后台重复实现 v3 分片逻辑 */
+export const PENDING_ADD_KEY = `${PREFIX}pending-add`;
 const CHUNK_LIMIT = 6000; // 保守阈值，低于 8KB 官方上限
 /** v3 书签分组的原始字节目标值：约 50 条/组，压缩后 base64 约 4~5KB（低于单 key 限制） */
 const GROUP_RAW_LIMIT = 20_000;
@@ -56,6 +58,8 @@ interface Meta {
   /** v1 遗留字段，读取旧数据时使用 */
   bmChunks?: number;
   grChunks?: number;
+  /** 主题跟随迁移标记：存云端，避免各设备各自用 localStorage 误判 */
+  themeMigrated?: boolean;
 }
 
 /* ----------------------- gzip 压缩与 base64 ----------------------- */
@@ -107,10 +111,63 @@ export const DEFAULT_SETTINGS: Settings = {
   sort: 'manual',
   lastSyncedAt: 0,
   installedAt: Date.now(),
+  stripTracking: true,
+  browserSync: { enabled: false, lastSyncedAt: 0, syncFolders: true, syncRemovals: true, folderMap: {} },
+  smartFolders: [],
+  autoTagRules: [],
+  healthMonitor: { enabled: false, intervalHours: 24, lastRunAt: 0, deadIds: [] },
+  archive: { idleDays: 0, lastRunAt: 0 },
+  shortcuts: {},
+  searchHistory: [],
 };
 
+/** 深合并设置：老用户缺少的新字段用默认值补齐，嵌套对象逐字段补全 */
+export function normalizeSettings(raw: Partial<Settings> | undefined): Settings {
+  const d = DEFAULT_SETTINGS;
+  const src = raw ?? {};
+  return {
+    ...d,
+    ...src,
+    browserSync: {
+      ...d.browserSync,
+      ...(src.browserSync ?? {}),
+      folderMap: src.browserSync?.folderMap && typeof src.browserSync.folderMap === 'object'
+        ? src.browserSync.folderMap : {},
+    },
+    healthMonitor: { ...d.healthMonitor, ...(src.healthMonitor ?? {}) },
+    archive: { ...d.archive, ...(src.archive ?? {}) },
+    smartFolders: Array.isArray(src.smartFolders) ? src.smartFolders : [],
+    autoTagRules: Array.isArray(src.autoTagRules) ? src.autoTagRules : [],
+    shortcuts: src.shortcuts && typeof src.shortcuts === 'object' ? src.shortcuts : {},
+    searchHistory: Array.isArray(src.searchHistory) ? src.searchHistory : [],
+  };
+}
+
 export function defaultState(): AppState {
-  return { bookmarks: [], groups: [], settings: { ...DEFAULT_SETTINGS } };
+  return { bookmarks: [], groups: [], settings: normalizeSettings(undefined) };
+}
+
+/* ------------------- 分层存储：冷数据下沉 chrome.storage.local ------------------- */
+/**
+ * chrome.storage.sync 只有 100KB，而 local 约 10MB。把「已归档」书签移出 sync、
+ * 存到 local，可突破容量天花板；归档书签仍保留在 state 里供浏览，只是不占同步配额。
+ */
+const ARCHIVE_KEY = `${PREFIX}archive`;
+
+/** 读取本地归档书签 */
+export async function loadArchivedBookmarks(): Promise<Bookmark[]> {
+  try {
+    const obj = await chrome.storage.local.get(ARCHIVE_KEY);
+    const list = obj[ARCHIVE_KEY] as Bookmark[] | undefined;
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 写入本地归档书签（全量覆盖） */
+export async function saveArchivedBookmarks(bookmarks: Bookmark[]): Promise<void> {
+  await chrome.storage.local.set({ [ARCHIVE_KEY]: bookmarks });
 }
 
 const encoder = new TextEncoder();
@@ -127,7 +184,8 @@ interface V3Payload {
  * 新书签 order 最大、排在末尾 → 通常只影响最后一个分组，利于增量写入。
  */
 async function buildV3Payload(state: AppState): Promise<V3Payload> {
-  const slim = slimBookmarks(state.bookmarks)
+  // 归档书签下沉到 local，不占 sync 配额
+  const slim = slimBookmarks(state.bookmarks.filter((b) => !b.archived))
     .sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
 
   // 按原始字节累积分组
@@ -181,6 +239,7 @@ export async function loadState(): Promise<AppState> {
       grpChunks: 0,
       updatedAt: Date.now(),
       deviceId: crypto.randomUUID(),
+      themeMigrated: true,
     };
     await chrome.storage.sync.set({
       [META_KEY]: newMeta,
@@ -190,21 +249,28 @@ export async function loadState(): Promise<AppState> {
   }
 
   const settingsData = await chrome.storage.sync.get(SETTINGS_KEY);
-  const settings = {
-    ...DEFAULT_SETTINGS,
-    ...((settingsData[SETTINGS_KEY] as Partial<Settings> | undefined) ?? {}),
-  };
+  const settings = normalizeSettings(settingsData[SETTINGS_KEY] as Partial<Settings> | undefined);
 
   // 一次性迁移：老版本默认固定浅色，升级后默认跟随浏览器。
-  // 用本地标记确保只改一次，之后用户显式选择的浅色/深色都会被尊重。
-  const THEME_FOLLOW_MIGRATED = 'mn:themeFollowMigrated';
-  if (!localStorage.getItem(THEME_FOLLOW_MIGRATED)) {
-    localStorage.setItem(THEME_FOLLOW_MIGRATED, '1');
+  // 标记存云端 meta，保证多设备一致；之后用户显式选择的浅色/深色都会被尊重。
+  // 兼容旧版 localStorage 标记：把它视作已迁移，避免二次覆盖。
+  const legacyMigrated = (() => {
+    try { return localStorage.getItem('mn:themeFollowMigrated') === '1'; } catch { return false; }
+  })();
+  if (!meta.themeMigrated && !legacyMigrated) {
     if (settings.theme === 'light') {
       settings.theme = 'system';
       await chrome.storage.sync.set({ [SETTINGS_KEY]: settings });
     }
+    // 写回迁移标记（不更新 updatedAt，避免把自己识别成远端更新）
+    await chrome.storage.sync.set({
+      [META_KEY]: { ...meta, themeMigrated: true },
+    });
+    meta.themeMigrated = true;
   }
+
+  // 本地归档书签（分层存储）与 sync 数据合并，对用户呈现为完整列表
+  const archived = await loadArchivedBookmarks();
 
   if (meta.format === 3) {
     // v3：书签分组各自独立 gzip，分组（文件夹）为单流切块
@@ -230,7 +296,7 @@ export async function loadState(): Promise<AppState> {
     } catch (err) {
       console.error('decompress sync data failed', err);
     }
-    return { bookmarks, groups: normalizeGroups(groups), settings };
+    return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(groups), settings };
   }
 
   if (meta.format === 2) {
@@ -252,7 +318,7 @@ export async function loadState(): Promise<AppState> {
         console.error('decompress sync data failed', err);
       }
     }
-    return { bookmarks, groups: normalizeGroups(groups), settings };
+    return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(groups), settings };
   }
 
   // v1：明文分片（老版本数据）
@@ -274,7 +340,7 @@ export async function loadState(): Promise<AppState> {
     (key) => (grData[key] as Group[] | undefined) ?? [],
   );
 
-  return { bookmarks, groups: normalizeGroups(rawGroups), settings };
+  return { bookmarks: [...bookmarks, ...archived], groups: normalizeGroups(rawGroups), settings };
 }
 
 /**
@@ -314,7 +380,24 @@ export async function estimateBytes(state: AppState): Promise<number> {
  * 将完整应用状态写回 storage.sync（v3：分组压缩 + 增量写入）。
  * 与云端现有分片逐 key 比对，只写变化的分片；写后清理旧格式与多余分片。
  */
-export async function saveState(state: AppState): Promise<number> {
+/** 保存过程被外部更新作废时抛出，调用方据此静默丢弃在途写入 */
+export class SyncAbortedError extends Error {
+  constructor() {
+    super('sync aborted by remote update');
+    this.name = 'SyncAbortedError';
+  }
+}
+
+export async function saveState(
+  state: AppState,
+  /** 每次真正写入前调用；返回 true 表示本次写入已被作废（远端数据到达） */
+  shouldAbort?: () => boolean,
+  /** 在提交 meta 之前调用，供调用方提前把时间戳标记为「自己的写入」，避免自触发的重载 */
+  onCommit?: (now: number) => void,
+): Promise<number> {
+  const guard = () => {
+    if (shouldAbort?.()) throw new SyncAbortedError();
+  };
   const now = Date.now();
   const settings: Settings = { ...state.settings, lastSyncedAt: now };
 
@@ -330,6 +413,7 @@ export async function saveState(state: AppState): Promise<number> {
     grpChunks: grpChunks.length,
     updatedAt: now,
     deviceId: oldMeta?.deviceId ?? crypto.randomUUID(),
+    themeMigrated: oldMeta?.themeMigrated ?? true,
   };
 
   /* ---- 增量写入：先取云端现有分片，只写变化的部分 ---- */
@@ -355,10 +439,15 @@ export async function saveState(state: AppState): Promise<number> {
     if (existing[key] !== c) payload[key] = c;
   });
 
-  /* ---- 清理必须先于写入 ----
-   * 旧格式（v1/v2）分片可能已占满配额：若先写新格式再清理，
-   * 写入会因配额不足被整体拒绝，清理永远执行不到，形成「重试永远失败」的死锁。
-   * 先删除旧格式分片释放配额，迁移才能成功。 */
+  /* ---- 分片收集（先算出待清理的旧 key，但删除要放到写入成功之后） ----
+   * 旧格式（v1/v2）分片可能已占满配额，而 chrome.storage.sync.set 是按本次写入
+   * 的键值总大小限额的：先写新分片再删旧分片，可能因配额被整体拒绝。
+   * 因此采取「两阶段写入」：
+   *   1) 先把 meta/settings 之外的分片写入（meta 仍指向旧格式，万一失败旧数据完好）；
+   *      若因配额被拒，再删旧分片腾空间后重试一次。
+   *   2) 分片就位后再写 meta/settings —— 这一步是「提交点」，之后读到的就是新数据。
+   *   3) 最后才删旧分片：即使删除失败，也只是残留冗余 key，不影响数据完整性。
+   * 相比旧版「先删后写」，彻底避免了「删成功但写失败 → 空库」。 */
   const staleKeys: string[] = [];
   for (let i = bmChunks.length; i < (prevIsV3 ? oldMeta?.bmGroups ?? 0 : 0); i += 1) {
     staleKeys.push(`${BG_PREFIX}${i}`);
@@ -373,9 +462,55 @@ export async function saveState(state: AppState): Promise<number> {
     for (let i = 0; i < (oldMeta.bmChunks ?? 0); i += 1) staleKeys.push(`${BM_PREFIX}${i}`);
     for (let i = 0; i < (oldMeta.grChunks ?? 0); i += 1) staleKeys.push(`${GR_PREFIX}${i}`);
   }
-  if (staleKeys.length) await chrome.storage.sync.remove(staleKeys);
 
-  await chrome.storage.sync.set(payload);
+  // 阶段 1：只写分片（不含 meta/settings）。meta 未变 → 失败时旧数据仍完整可读。
+  const chunkPayload: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (key !== META_KEY && key !== SETTINGS_KEY) chunkPayload[key] = value;
+  }
+  if (Object.keys(chunkPayload).length) {
+    try {
+      guard();
+      await chrome.storage.sync.set(chunkPayload);
+    } catch (err) {
+      if (err instanceof SyncAbortedError) throw err;
+      // 仅当确实是配额问题、且存在旧格式分片可清理时，删旧腾空间后重试一次。
+      // 其它错误（网络/频率）不能删旧，否则会把用户数据置于无备份状态。
+      if (!staleKeys.length || !/quota/i.test(String(err))) throw err;
+      guard();
+      await chrome.storage.sync.remove(staleKeys);
+      guard();
+      await chrome.storage.sync.set(chunkPayload);
+    }
+  }
+
+  // 阶段 2：提交点——meta 指向新分片，读取端从这一刻起看到新数据。
+  guard();
+  // 先通知调用方这是「自己的写入」，避免紧随其后的 onChanged 被误判成远端更新
+  onCommit?.(now);
+  await chrome.storage.sync.set({
+    [SETTINGS_KEY]: settings,
+    [META_KEY]: meta,
+  });
+
+  // 阶段 3：提交成功后清理旧/冗余分片。失败只留下冗余 key，不影响可读性。
+  if (staleKeys.length) {
+    try {
+      guard();
+      await chrome.storage.sync.remove(staleKeys);
+    } catch (err) {
+      if (err instanceof SyncAbortedError) throw err;
+      console.warn('清理旧分片失败（数据已提交，可忽略）', err);
+    }
+  }
+
+  // 阶段 4：归档书签写入 local（不占 sync 配额）。失败不影响 sync 数据完整性。
+  guard();
+  try {
+    await saveArchivedBookmarks(state.bookmarks.filter((b) => b.archived));
+  } catch (err) {
+    console.warn('写入本地归档失败', err);
+  }
 
   return now;
 }
@@ -418,17 +553,32 @@ export async function getDiagnostic(): Promise<SyncDiagnostic> {
   };
 }
 
-/** 监听其他设备/标签页带来的数据变化 */
-export function onExternalChange(callback: () => void): () => void {
+/**
+ * 监听其他设备/标签页带来的数据变化。
+ * 只在 meta 的「提交点」写入时通知，并把云端 updatedAt 交给调用方判定新旧——
+ * 分片写入、旧分片清理都不带 meta，不会触发误重载；自己刚写入的数据也能被准确识别。
+ * 右键收藏队列（pending-add）变化单独通知，交给前端走正规 addBookmark 落盘。
+ */
+export function onExternalChange(callback: (remoteUpdatedAt: number, pendingAdd: boolean) => void): () => void {
   const handler = (
     changes: { [key: string]: chrome.storage.StorageChange },
     areaName: string,
   ) => {
     if (areaName !== 'sync') return;
-    // 只关心我们写入的键，忽略其他扩展数据
-    const relevant = Object.keys(changes).some((key) => key.startsWith(PREFIX));
-    if (relevant) callback();
+    const pendingAdd = Boolean(changes[PENDING_ADD_KEY]?.newValue);
+    const metaChange = changes[META_KEY];
+    if (!metaChange?.newValue && !pendingAdd) return;
+    const meta = metaChange?.newValue as Meta | undefined;
+    callback(meta?.updatedAt ?? 0, pendingAdd);
   };
   chrome.storage.onChanged.addListener(handler);
   return () => chrome.storage.onChanged.removeListener(handler);
+}
+
+/** 右键菜单收藏入队（service worker 调用）：写入 URL/title/favicon，由前端消费 */
+export interface PendingAdd { url: string; title: string; favicon?: string; createdAt: number }
+export async function enqueuePendingAdd(item: PendingAdd): Promise<void> {
+  const obj = await chrome.storage.sync.get(PENDING_ADD_KEY);
+  const list = (obj[PENDING_ADD_KEY] as PendingAdd[] | undefined) ?? [];
+  await chrome.storage.sync.set({ [PENDING_ADD_KEY]: [...list, item].slice(-50) });
 }

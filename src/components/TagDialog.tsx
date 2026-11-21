@@ -84,7 +84,7 @@ export default function TagDialog({
   open, tags, duplicates = [], onMerge, onClose, onRename, onDelete,
 }: Props) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   if (!open) return null;
   return (

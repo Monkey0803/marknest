@@ -46,7 +46,7 @@ export default function BookmarkDialog({
   const [urlTouched, setUrlTouched] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   useEffect(() => {
     if (!open) return;
@@ -60,15 +60,6 @@ export default function BookmarkDialog({
     setUrlTouched(false);
     setTimeout(() => titleRef.current?.focus(), 30);
   }, [open, editing, defaultGroupId, preset]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -99,12 +90,15 @@ export default function BookmarkDialog({
       setError(url.trim() ? '请输入有效的网址（例如 example.com）' : '请填写网址');
       return;
     }
+    // 标题/网址框回车提交时标签框不会失焦，把尚未确认的输入一并收进来，避免静默丢失
+    const pendingTag = tagInput.trim().replace(/^#/, '');
+    const finalTags = pendingTag && !tags.includes(pendingTag) ? [...tags, pendingTag] : tags;
     onSave({
       title: title.trim() || getHost(normalizeUrl(url)),
       url: normalizeUrl(url),
       description: description.trim(),
       groupId: groupId || null,
-      tags,
+      tags: finalTags,
     });
   };
 

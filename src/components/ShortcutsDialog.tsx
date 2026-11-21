@@ -1,27 +1,34 @@
 import { useRef } from 'react';
 import { useModalFocus } from '../lib/useModalFocus';
-import { IconClose } from './Icons';
+import { SHORTCUT_ACTIONS } from '../lib/features';
+import { IconClose, IconKeyboard } from './Icons';
 
-const ROWS: [string, string][] = [
-  ['⌘ / Ctrl + K', '快速切换：搜书签、分组或命令'],
-  ['/', '聚焦搜索框'],
-  ['⌘ / Ctrl + N', '新建书签'],
-  ['⌘ / Ctrl + ⇧ + L', '定位当前页面在书签中的位置'],
+/** 固定的非自定义快捷键说明 */
+const FIXED_ROWS: [string, string][] = [
   ['↑ / ↓', '在列表中移动焦点'],
   ['Enter', '打开当前焦点的书签'],
-  ['X', '多选当前书签'],
-  ['⌘ / Ctrl + A', '全选当前列表'],
-  ['⌘ / Ctrl + Z', '撤销上一步改动（可连续回退 20 步）'],
-  ['⌘ / Ctrl + ⇧ + Z', '重做（也可按 ⌘ / Ctrl + Y）'],
   ['Esc', '退出多选 / 清除搜索 / 关闭弹窗'],
   ['拖拽书签', '调整顺序；拖到分组上直接归类'],
   ['拖拽分组', '拖到另一分组上变成子分组；拖到「分组」标题移回顶层'],
   ['右键菜单', '快速收藏当前页面或链接'],
 ];
 
-export default function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** 把 Mod 展开为当前平台的显示符号 */
+const displayCombo = (combo: string) =>
+  combo.replace('Mod', /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl')
+    .replace(/\+/g, ' + ');
+
+interface Props {
+  open: boolean;
+  onClose: () => void;
+  /** 用户自定义快捷键 */
+  bindings?: Record<string, string>;
+  onOpenSettings?: () => void;
+}
+
+export default function ShortcutsDialog({ open, onClose, bindings, onOpenSettings }: Props) {
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   if (!open) return null;
   return (
@@ -33,13 +40,24 @@ export default function ShortcutsDialog({ open, onClose }: { open: boolean; onCl
         </div>
         <div className="modal__body">
           <div className="shortcuts">
-            {ROWS.map(([key, desc]) => (
+            {SHORTCUT_ACTIONS.map((a) => (
+              <div key={a.id} className="shortcut-row">
+                <kbd className="kbd">{displayCombo(bindings?.[a.id] ?? a.default)}</kbd>
+                <span>{a.label}</span>
+              </div>
+            ))}
+            {FIXED_ROWS.map(([key, desc]) => (
               <div key={key} className="shortcut-row">
                 <kbd className="kbd">{key}</kbd>
                 <span>{desc}</span>
               </div>
             ))}
           </div>
+          {onOpenSettings && (
+            <button className="btn btn--ghost btn--sm" onClick={() => { onClose(); onOpenSettings(); }} style={{ marginTop: 12 }}>
+              <IconKeyboard size={13} /> 自定义快捷键
+            </button>
+          )}
           <p className="hint hint--foot">提示：在网页上右键可直接使用「收藏此页面到 Marknest」。顶栏主题按钮按「浅色 → 深色 → 跟随浏览器」三态循环。</p>
         </div>
       </div>

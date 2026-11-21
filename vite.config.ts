@@ -13,9 +13,10 @@ export default defineConfig({
         options: resolve(__dirname, 'options.html'),
       },
       output: {
-        entryFileNames: 'assets/[name].js',
-        chunkFileNames: 'assets/[name].js',
-        assetFileNames: 'assets/[name][extname]',
+        // 加内容 hash：升级后浏览器不会命中旧 JS/CSS 缓存
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
       },
     },
   },

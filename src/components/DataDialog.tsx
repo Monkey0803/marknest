@@ -50,7 +50,7 @@ export default function DataDialog({
   const [deadLinks, setDeadLinks] = useState<LinkCheckResult[]>([]);
   const [healthNote, setHealthNote] = useState('');
   const modalRef = useRef<HTMLDivElement>(null);
-  useModalFocus(open, modalRef);
+  useModalFocus(open, modalRef, onClose);
 
   useEffect(() => {
     if (!open) return;
