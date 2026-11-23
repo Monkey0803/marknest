@@ -833,6 +833,13 @@ button { cursor: pointer; }
 .dup-box p { margin: 0; font-size: 11px; color: var(--ink-2); }
 
 /* ---- 书签健康检查 ---- */
+/* 死链结果容器：纵向布局（不能复用横向的 dup-box，否则说明文字被挤成竖排、删除按钮错位） */
+.health-box {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 12px; border-radius: var(--r-sm); background: var(--danger-soft);
+  border-left: 2px solid var(--danger);
+}
+.health-box__note { margin: 0 0 4px; font-size: 11px; color: var(--ink-2); line-height: 1.5; }
 .health-stats { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .health-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -843,20 +850,26 @@ button { cursor: pointer; }
 .health-chip--muted { background: var(--surface-2); color: var(--ink-2); }
 .health-list { list-style: none; margin: 8px 0; padding: 0; }
 .health-list__row {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   padding: 6px 0; border-bottom: 1px solid var(--line);
-  font-size: 11.5px;
+  font-size: 11.5px; min-width: 0;
 }
 .health-list__row:last-child { border-bottom: none; }
 .health-list__title {
-  flex: 1; min-width: 0; color: var(--ink);
+  flex: 1 1 auto; min-width: 0; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .health-list__host {
-  flex: none; max-width: 30%; color: var(--muted);
+  flex: 0 1 auto; max-width: 24%; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .health-list__err { flex: none; color: var(--danger); font-size: 10.5px; }
+.health-list__row .icon-btn { flex: none; opacity: 0.75; }
+.health-list__row .icon-btn:hover, .health-list__row .icon-btn:focus-visible { opacity: 1; }
+@media (max-width: 470px) {
+  .health-list__host { display: none; }
+  .health-list__err { max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 
 /* ---- 分组模板 ---- */
 .template-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

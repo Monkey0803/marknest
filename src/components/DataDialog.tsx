@@ -420,8 +420,8 @@ export default function DataDialog({
             </button>
             {healthNote && <p className="hint">{healthNote}</p>}
             {deadLinks.length > 0 && (
-              <div className="dup-box">
-                <p>以下链接无法连通（受跨域限制，结果仅供参考，不能区分 404 与 200）：</p>
+              <div className="health-box">
+                <p className="health-box__note">以下链接无法连通（受跨域限制，结果仅供参考，不能区分 404 与 200）：</p>
                 <ul className="health-list">
                   {deadLinks.map((r) => (
                     <li key={r.id} className="health-list__row">
