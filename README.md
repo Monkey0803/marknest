@@ -49,8 +49,8 @@
 
 ### 方式一：下载即用（推荐，无需 Node.js）
 
-1. 打开 [Releases](https://github.com/Monkey0803/marknest/releases/latest)，下载 **`marknest-v1.0.0.zip`**。
-2. 解压，得到一个 `marknest-v1.0.0` 文件夹——**打开后应能直接看到 `manifest.json`**（不是它里面的 `assets` 子目录）。
+1. 打开 [Releases](https://github.com/Monkey0803/marknest/releases/latest)，下载 **`marknest-v1.5.0.zip`**。
+2. 解压，得到一个 `marknest-v1.5.0` 文件夹——**打开后应能直接看到 `manifest.json`**（不是它里面的 `assets` 子目录）。
 3. Chrome 地址栏输入 `chrome://extensions`，打开右上角的「**开发者模式**」。
 4. 点击「**加载已解压的扩展程序**」，选择第 2 步解压出的那个文件夹。
 5. 浏览器工具栏出现 Marknest 图标（赤陶色书签），**点击图标即在右侧展开书签侧边栏**。侧边栏高度自动等于浏览器内容区高度，宽度可通过拖动左边缘调整（初始 400px）。
@@ -166,8 +166,8 @@ npm run build      # 构建到 dist/
 
 ```bash
 npm run build
-cd dist && zip -r ../marknest-v1.0.0.zip . -x '*.DS_Store' -x '__MACOSX/*'
-gh release create v1.0.0 ../marknest-v1.0.0.zip --title "Marknest v1.0.0" --notes-file <说明文件>
+cd dist && zip -r ../marknest-v1.5.0.zip . -x '*.DS_Store' -x '__MACOSX/*'
+gh release create v1.5.0 ../marknest-v1.5.0.zip --title "Marknest v1.5.0" --notes-file <说明文件>
 ```
 
 `dev-preview/` 提供了用模拟数据渲染的预览页，可在本地起静态服务器后用普通浏览器查看界面效果（无需加载扩展）：
